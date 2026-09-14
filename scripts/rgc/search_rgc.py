@@ -33,8 +33,12 @@ PAGE_SIZE = 10  # confirmed from a real results page: 10 projects listed per pag
 
 SEARCH_PAGES_DIR = REPO_ROOT / "data" / "raw" / "rgc" / "search_pages"
 
-PROJ_ID_RE = re.compile(r'name="proj_id"\s+value="(\d+)"')
-RECORDS_RE = re.compile(r"Number of records found\s*:\s*([\d,]+)")
+# IGNORECASE: this is an old IBM WebSphere-generated site that writes raw HTML with
+# uppercase attribute names (NAME="proj_id"). A browser's DOM/"Save Page As" silently
+# lowercases this, which is why a manually saved page matched fine but the live server
+# response (as seen by requests, unprocessed) did not.
+PROJ_ID_RE = re.compile(r'name="proj_id"\s+value="(\d+)"', re.IGNORECASE)
+RECORDS_RE = re.compile(r"Number of records found\s*:\s*([\d,]+)", re.IGNORECASE)
 
 
 def fetch_search_page(year: str, page: int, status: str, scheme: str) -> str:
