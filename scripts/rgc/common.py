@@ -38,6 +38,21 @@ def fetch_html(url: str, **kwargs) -> str:
         raise
 
 
+def post_html(url: str, data: dict) -> str:
+    """POST a form submission, throttled, with failures logged to the audit trail.
+    Used to replicate RGC's JavaScript-driven search/pagination forms directly."""
+    try:
+        resp = requests.post(url, data=data, headers={"User-Agent": USER_AGENT}, timeout=30)
+        resp.raise_for_status()
+        time.sleep(REQUEST_DELAY_SECONDS)
+        log_event({"source_url": url, "status": "ok", "http_status": resp.status_code, "post_data": data})
+        resp.encoding = resp.apparent_encoding or resp.encoding
+        return resp.text
+    except requests.RequestException as exc:
+        log_event({"source_url": url, "status": "error", "error": str(exc), "post_data": data})
+        raise
+
+
 def save_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
