@@ -25,7 +25,7 @@ import math
 import re
 from pathlib import Path
 
-from common import REPO_ROOT, post_html, save_text
+from common import REPO_ROOT, post_html, prime_session, save_text
 
 SEARCH_URL = "https://cerg1.ugc.edu.hk/cergprod/scrrm00541.jsp"
 DETAIL_URL_TEMPLATE = "https://cerg1.ugc.edu.hk/cergprod/scrrm00542.jsp?proj_id={proj_id}"
@@ -112,6 +112,7 @@ def main():
     parser.add_argument("--out", default="links.txt")
     args = parser.parse_args()
 
+    prime_session()
     years = parse_year_range(args.years)
     all_proj_ids = []
     for year in years:

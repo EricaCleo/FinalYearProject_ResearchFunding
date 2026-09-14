@@ -6,11 +6,33 @@ from pathlib import Path
 
 import requests
 
-USER_AGENT = "Mozilla/5.0 (research-fyp-crawler; contact: your-email@example.com)"
+# A real browser UA + Referer/Origin: RGC's site returned a correct record count but
+# zero result rows to a plain requests.post() with a generic UA and no session/Referer,
+# even with form fields that exactly matched a captured real browser payload — so it
+# likely does some basic anti-bot/CSRF checking. A persistent Session (cookies carried
+# across requests, like a browser tab) plus these headers should look like a real visit.
+USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+SEARCH_BASE_URL = "https://cerg1.ugc.edu.hk/cergprod/scrrm00541.jsp"
 REQUEST_DELAY_SECONDS = 1.0
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AUDIT_LOG = REPO_ROOT / "data" / "audit" / "collection_log.jsonl"
+
+# Shared session so cookies (e.g. JSESSIONID) persist across requests, same as a browser tab.
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+})
+
+
+def prime_session() -> None:
+    """GET the search page once to pick up a session cookie before any POST, like a
+    browser would from actually visiting the page. Safe to call multiple times."""
+    SESSION.get(SEARCH_BASE_URL, timeout=30)
+    time.sleep(REQUEST_DELAY_SECONDS)
 
 
 def now_iso() -> str:
@@ -27,7 +49,7 @@ def log_event(event: dict) -> None:
 def fetch_html(url: str, **kwargs) -> str:
     """GET a page, throttled, with failures logged to the audit trail."""
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30, **kwargs)
+        resp = SESSION.get(url, timeout=30, **kwargs)
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY_SECONDS)
         log_event({"source_url": url, "status": "ok", "http_status": resp.status_code})
@@ -40,9 +62,10 @@ def fetch_html(url: str, **kwargs) -> str:
 
 def post_html(url: str, data: dict) -> str:
     """POST a form submission, throttled, with failures logged to the audit trail.
-    Used to replicate RGC's JavaScript-driven search/pagination forms directly."""
+    Used to replicate RGC's JavaScript-driven search/pagination forms directly.
+    Sends a Referer so the request looks like it came from the search page itself."""
     try:
-        resp = requests.post(url, data=data, headers={"User-Agent": USER_AGENT}, timeout=30)
+        resp = SESSION.post(url, data=data, headers={"Referer": SEARCH_BASE_URL}, timeout=30)
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY_SECONDS)
         log_event({"source_url": url, "status": "ok", "http_status": resp.status_code, "post_data": data})
