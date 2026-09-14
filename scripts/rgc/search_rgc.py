@@ -37,20 +37,22 @@ PROJ_ID_RE = re.compile(r'name="proj_id"\s+value="(\d+)"')
 RECORDS_RE = re.compile(r"Number of records found\s*:\s*([\d,]+)")
 
 
-def fetch_search_page(year: str, page: int, status: str) -> str:
+def fetch_search_page(year: str, page: int, status: str, scheme: str) -> str:
     if page == 1:
-        # Mirrors the visible search form (scrrm00541) fields.
+        # Mirrors the visible search form (scrrm00541) fields — confirmed via a real
+        # browser's DevTools Network payload for Award Year 2006.
         data = {
             "mode": "search", "page": "1", "Year": year,
-            "sScheme": "", "panel": "", "subject": "", "institution": "",
+            "sScheme": scheme, "panel": "", "subject": "", "institution": "",
             "proj_id": "", "proj_title": "", "isname": "", "ioname": "",
             "fromAwardYear": "", "toAwardYear": "", "sStatus": status,
         }
     else:
-        # Mirrors the hidden frm_goToPage fields the goToPage() JS function fills in.
+        # Mirrors the hidden frm_goToPage fields the goToPage() JS function fills in —
+        # confirmed via DevTools payload for a page-2 request.
         data = {
-            "mode": "search", "subject": "", "panel": "", "scheme": "",
-            "sScheme": "", "sStatus": status, "proj_id": "", "Old_proj_id": "",
+            "mode": "search", "subject": "", "panel": "", "scheme": scheme,
+            "sScheme": scheme, "sStatus": status, "proj_id": "", "Old_proj_id": "",
             "proj_title": "", "isname": "", "ioname": "", "institution": "",
             "Year": year, "pages": str(page),
         }
@@ -67,16 +69,20 @@ def extract_proj_ids(html: str) -> list[str]:
     return list(dict.fromkeys(PROJ_ID_RE.findall(html)))
 
 
-def crawl_year(year: str, status: str) -> list[str]:
-    html = fetch_search_page(year, 1, status)
+def crawl_year(year: str, status: str, scheme: str) -> list[str]:
+    html = fetch_search_page(year, 1, status, scheme)
     save_text(SEARCH_PAGES_DIR / f"{year}_page001.html", html)
     total = parse_records_count(html)
     proj_ids = extract_proj_ids(html)
     pages = math.ceil(total / PAGE_SIZE) if total else (1 if proj_ids else 0)
     print(f"  {year}: {total} records, {pages} pages")
+    if total and not proj_ids:
+        print(f"    WARNING: page 1 reports {total} records but extracted 0 proj_ids — "
+              f"the --scheme code ({scheme!r}) is probably wrong for this year. "
+              f"Check this year's Funding Scheme dropdown value in DevTools.")
 
     for page in range(2, pages + 1):
-        html = fetch_search_page(year, page, status)
+        html = fetch_search_page(year, page, status, scheme)
         save_text(SEARCH_PAGES_DIR / f"{year}_page{page:03d}.html", html)
         found = extract_proj_ids(html)
         if not found:
@@ -98,6 +104,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--years", required=True, help="e.g. 2006-2026 or a single year like 2006")
     parser.add_argument("--status", default="C", help="C=Completed (default), O=On-going, T=Terminated, W=Withdrawn, blank for all")
+    parser.add_argument("--scheme", default="1",
+                         help="Funding Scheme code (default 1 = General Research Fund, confirmed for 2006). "
+                              "Some later years may offer more schemes in the dropdown — if a year's page 1 "
+                              "warns about 0 extracted proj_ids despite records>0, check that year's Funding "
+                              "Scheme dropdown value in DevTools and pass the right code here.")
     parser.add_argument("--out", default="links.txt")
     args = parser.parse_args()
 
@@ -105,7 +116,7 @@ def main():
     all_proj_ids = []
     for year in years:
         print(f"Searching year {year}...")
-        all_proj_ids.extend(crawl_year(year, args.status))
+        all_proj_ids.extend(crawl_year(year, args.status, args.scheme))
 
     all_proj_ids = list(dict.fromkeys(all_proj_ids))
     links = [DETAIL_URL_TEMPLATE.format(proj_id=pid) for pid in all_proj_ids]
