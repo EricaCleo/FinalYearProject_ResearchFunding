@@ -8,6 +8,7 @@ venv/
 data/raw/**/*.html
 data/raw/**/*.json
 data/raw/**/*.jsonl
+data/raw/**/*.csv
 data/linked/**/*.jsonl
 data/linked/**/*.json
 data/audit/**/*.jsonl
