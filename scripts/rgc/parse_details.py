@@ -71,11 +71,15 @@ def extract_label_value_pairs(soup: BeautifulSoup) -> dict[str, str]:
 
 
 def map_known_fields(raw_fields: dict[str, str]) -> dict[str, str]:
-    mapped = {}
+    # Every record gets every known field name, "" when this page didn't have it — so
+    # every row in parsed.jsonl has the same set of columns (important for loading this
+    # into pandas/Excel as a clean table, e.g. an older project with no Abstract field
+    # still gets "abstract": "" instead of the key being missing entirely).
+    mapped = {field_name: "" for field_name in dict.fromkeys(FIELD_KEYWORDS.values())}
     for label, value in raw_fields.items():
         label_lower = label.lower()
         for keyword, field_name in FIELD_KEYWORDS.items():
-            if keyword in label_lower and field_name not in mapped:
+            if keyword in label_lower and not mapped[field_name]:
                 mapped[field_name] = value
     return mapped
 
