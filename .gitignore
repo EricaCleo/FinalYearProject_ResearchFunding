@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Scraped data is regenerated locally, not committed
+data/raw/**/*.html
+data/raw/**/*.json
+data/raw/**/*.jsonl
+data/linked/**/*.jsonl
+data/linked/**/*.json
+data/audit/**/*.jsonl
+!data/**/.gitkeep
