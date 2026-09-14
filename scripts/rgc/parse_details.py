@@ -1,15 +1,19 @@
 """
 Step 3: parse downloaded RGC project HTML into structured JSON records (Slide 4 schema).
 
-This is a best-effort generic parser: RGC detail pages are typically laid out as
-label/value pairs in an HTML table. It pulls every such pair into `raw_fields`, and
-maps the common ones (title, PI, institution, amount, dates, status, panel) into named
-fields via keyword matching.
+RGC detail pages (scrrm00542.jsp) are a single <table> of label/value row pairs, e.g.:
+    Funding Scheme :          | General Research Fund
+    Project Number :          | 100110
+    Project Title(English) :  | Stability of Error Bounds in Statistical Learning Theory
+    Principal Investigator(English) : | Dr Caponnetto, Andrea
+    Fund Approved :           | 540,000
+    Project Status :          | Completed
+    Completion Date :         | 31-7-2013
+    Project Objectives :      | ...
 
-IMPORTANT: this WILL need tuning once you look at real saved pages, because we don't
-yet know the exact label wording RGC uses. Send Claude one or two saved HTML files from
-data/raw/rgc/html/ and the FIELD_KEYWORDS map below can be corrected precisely instead
-of guessed.
+Every label/value pair found is kept in `raw_fields` regardless of whether it's in
+FIELD_KEYWORDS below, so nothing is silently dropped even if a page has an unexpected
+field.
 
 Usage:
     python parse_details.py
@@ -24,21 +28,29 @@ from common import REPO_ROOT, now_iso, append_jsonl
 
 HTML_DIR = REPO_ROOT / "data" / "raw" / "rgc" / "html"
 OUT_FILE = REPO_ROOT / "data" / "raw" / "rgc" / "parsed.jsonl"
+DETAIL_URL_TEMPLATE = "https://cerg1.ugc.edu.hk/cergprod/scrrm00542.jsp?proj_id={proj_id}"
 
-# label keyword (lowercased, substring match) -> normalized field name
+# label keyword (lowercased, substring match) -> normalized field name.
+# Order matters: for a label matching multiple keywords, the first (English) wins.
 FIELD_KEYWORDS = {
-    "project title": "title",
-    "principal investigator": "pi",
+    "funding scheme": "scheme",
+    "project number": "project_number",
+    "project title(english)": "title",
+    "project title(chinese)": "title_zh",
+    "principal investigator(english)": "pi",
+    "principal investigator(chinese)": "pi_zh",
+    "department": "department",
     "institution": "institution",
-    "amount": "amount",
-    "approved amount": "amount",
-    "start date": "start_date",
-    "completion date": "end_date",
-    "end date": "end_date",
-    "status": "status",
+    "e-mail address": "email",
+    "tel": "phone",
+    "co - investigator": "co_investigators",
     "panel": "panel",
     "subject area": "field",
-    "funding scheme": "scheme",
+    "exercise year": "exercise_year",
+    "fund approved": "amount",
+    "project status": "status",
+    "completion date": "end_date",
+    "project objectives": "objectives",
 }
 
 
@@ -70,9 +82,10 @@ def parse_file(path: Path) -> dict:
     html = path.read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(html, "lxml")
     raw_fields = extract_label_value_pairs(soup)
+    proj_id = path.stem  # download_details.py names files by proj_id when present
     record = {
-        "grant_id": path.stem,
-        "source_url": None,  # TODO: fill from data/audit/collection_log.jsonl by matching this file's slug
+        "grant_id": proj_id,
+        "source_url": DETAIL_URL_TEMPLATE.format(proj_id=proj_id),
         "collected_at": now_iso(),
         **map_known_fields(raw_fields),
         "raw_fields": raw_fields,

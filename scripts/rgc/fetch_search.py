@@ -24,10 +24,9 @@ from bs4 import BeautifulSoup
 
 from common import REPO_ROOT, fetch_html, save_text
 
-# TODO: adjust once you've inspected a real search-results page. This is a placeholder
-# that looks for any link whose href contains a case-insensitive "detail"/"scrrm" hint,
-# common in RGC's URL naming (e.g. scrrm00542-style detail pages).
-LINK_PATTERN = re.compile(r"(detail|scrrm005\d\d)", re.IGNORECASE)
+# Confirmed from a real search-results page: each project's number links to
+# scrrm00542.jsp?proj_id=<id>&... (the detail page).
+LINK_PATTERN = re.compile(r"scrrm00542\.jsp\?.*proj_id=", re.IGNORECASE)
 
 
 def extract_links(html: str, base_url: str) -> list[str]:

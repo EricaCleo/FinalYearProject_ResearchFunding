@@ -11,6 +11,7 @@ so it's safe to re-run after a partial run or after adding new links.
 import argparse
 import hashlib
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 from common import REPO_ROOT, fetch_html, save_text
 
@@ -18,8 +19,11 @@ HTML_DIR = REPO_ROOT / "data" / "raw" / "rgc" / "html"
 
 
 def slug_for(url: str) -> str:
-    """Stable filename for a URL. Prefer a real project ID (e.g. ?...ProjID=...) once
-    you know the RGC URL's query-string field names; falls back to a hash."""
+    """Use the real RGC project number (proj_id query param) as the filename so files
+    are human-identifiable; falls back to a hash if a URL doesn't carry one."""
+    proj_id = parse_qs(urlparse(url).query).get("proj_id", [None])[0]
+    if proj_id:
+        return proj_id
     return hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
 
 
