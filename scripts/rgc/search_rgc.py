@@ -85,14 +85,24 @@ def crawl_year(year: str, status: str, scheme: str) -> list[str]:
               f"the --scheme code ({scheme!r}) is probably wrong for this year. "
               f"Check this year's Funding Scheme dropdown value in DevTools.")
 
+    empty_pages = []
     for page in range(2, pages + 1):
-        html = fetch_search_page(year, page, status, scheme)
-        save_text(SEARCH_PAGES_DIR / f"{year}_page{page:03d}.html", html)
-        found = extract_proj_ids(html)
+        found = []
+        for attempt in range(3):  # a page coming back empty is often a transient hiccup
+            html = fetch_search_page(year, page, status, scheme)
+            save_text(SEARCH_PAGES_DIR / f"{year}_page{page:03d}.html", html)
+            found = extract_proj_ids(html)
+            if found:
+                break
         if not found:
-            print(f"    WARNING: page {page} returned 0 projects (expected more) — stopping this year early")
-            break
+            print(f"    WARNING: page {page} returned 0 projects after 3 tries — skipping just this page, continuing")
+            empty_pages.append(page)
+            continue
         proj_ids.extend(found)
+
+    if empty_pages:
+        print(f"    {len(empty_pages)} page(s) never returned data and were skipped: {empty_pages}. "
+              f"Re-run this year later to try filling those in.")
 
     return list(dict.fromkeys(proj_ids))
 
