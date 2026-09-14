@@ -51,6 +51,8 @@ FIELD_KEYWORDS = {
     "project status": "status",
     "completion date": "end_date",
     "project objectives": "objectives",
+    "abstract as per original application": "abstract",
+    "layman's summary": "layman_summary",
 }
 
 

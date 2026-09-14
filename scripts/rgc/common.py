@@ -53,7 +53,11 @@ def fetch_html(url: str, **kwargs) -> str:
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY_SECONDS)
         log_event({"source_url": url, "status": "ok", "http_status": resp.status_code})
-        resp.encoding = resp.apparent_encoding or resp.encoding
+        # The site's own <meta> tag declares UTF-8. Don't guess via apparent_encoding —
+        # a page that's mostly English text (e.g. a long abstract) with only a little
+        # embedded Chinese can fool that heuristic into picking the wrong single-byte
+        # encoding, corrupting the Chinese text into mojibake. Force it instead.
+        resp.encoding = "utf-8"
         return resp.text
     except requests.RequestException as exc:
         log_event({"source_url": url, "status": "error", "error": str(exc)})
@@ -69,7 +73,11 @@ def post_html(url: str, data: dict) -> str:
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY_SECONDS)
         log_event({"source_url": url, "status": "ok", "http_status": resp.status_code, "post_data": data})
-        resp.encoding = resp.apparent_encoding or resp.encoding
+        # The site's own <meta> tag declares UTF-8. Don't guess via apparent_encoding —
+        # a page that's mostly English text (e.g. a long abstract) with only a little
+        # embedded Chinese can fool that heuristic into picking the wrong single-byte
+        # encoding, corrupting the Chinese text into mojibake. Force it instead.
+        resp.encoding = "utf-8"
         return resp.text
     except requests.RequestException as exc:
         log_event({"source_url": url, "status": "error", "error": str(exc), "post_data": data})
