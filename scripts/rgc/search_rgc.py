@@ -23,7 +23,10 @@ it's the download step, not this one, that's slow).
 import argparse
 import math
 import re
+import time
 from pathlib import Path
+
+import requests
 
 from common import REPO_ROOT, post_html, prime_session, save_text
 
@@ -73,8 +76,26 @@ def extract_proj_ids(html: str) -> list[str]:
     return list(dict.fromkeys(PROJ_ID_RE.findall(html)))
 
 
+def fetch_with_retry(year: str, page: int, status: str, scheme: str, attempts: int = 3) -> str:
+    """A network timeout/connection error used to crash the whole script (losing every
+    page collected so far, for every year, since links.txt is only written once at the
+    end). Retry on network errors the same way we already retry on an empty page —
+    transient either way on this old, occasionally flaky server. Returns "" if every
+    attempt fails, instead of raising."""
+    for attempt in range(attempts):
+        try:
+            return fetch_search_page(year, page, status, scheme)
+        except requests.RequestException as exc:
+            print(f"    page {page} attempt {attempt + 1}/{attempts}: network error ({exc}), retrying")
+            time.sleep(2)
+    return ""
+
+
 def crawl_year(year: str, status: str, scheme: str) -> list[str]:
-    html = fetch_search_page(year, 1, status, scheme)
+    html = fetch_with_retry(year, 1, status, scheme)
+    if not html:
+        print(f"    ERROR: could not fetch page 1 for {year} after retries — skipping this year entirely. Re-run it later.")
+        return []
     save_text(SEARCH_PAGES_DIR / f"{year}_page001.html", html)
     total = parse_records_count(html)
     proj_ids = extract_proj_ids(html)
@@ -87,15 +108,12 @@ def crawl_year(year: str, status: str, scheme: str) -> list[str]:
 
     empty_pages = []
     for page in range(2, pages + 1):
-        found = []
-        for attempt in range(3):  # a page coming back empty is often a transient hiccup
-            html = fetch_search_page(year, page, status, scheme)
+        html = fetch_with_retry(year, page, status, scheme)
+        found = extract_proj_ids(html) if html else []
+        if html:
             save_text(SEARCH_PAGES_DIR / f"{year}_page{page:03d}.html", html)
-            found = extract_proj_ids(html)
-            if found:
-                break
         if not found:
-            print(f"    WARNING: page {page} returned 0 projects after 3 tries — skipping just this page, continuing")
+            print(f"    WARNING: page {page} returned 0 projects after retries — skipping just this page, continuing")
             empty_pages.append(page)
             continue
         proj_ids.extend(found)
