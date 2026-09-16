@@ -57,6 +57,13 @@ def main():
             rec.pop("raw_fields", None)
             if wanted_ids is not None and rec.get("grant_id") not in wanted_ids:
                 continue
+            # A few fields (publications, conferences, objectives_addressed) are lists
+            # of dicts, not plain text — csv.DictWriter would otherwise just call
+            # str() on them (ugly Python repr). JSON-encode them into the cell instead,
+            # so the data's still there and still parseable, just as text.
+            for key, value in rec.items():
+                if isinstance(value, list):
+                    rec[key] = json.dumps(value, ensure_ascii=False) if value else ""
             records.append(rec)
 
     if not records:

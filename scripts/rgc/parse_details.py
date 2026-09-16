@@ -5,15 +5,20 @@ RGC detail pages (scrrm00542.jsp) are a single <table> of label/value row pairs,
     Funding Scheme :          | General Research Fund
     Project Number :          | 100110
     Project Title(English) :  | Stability of Error Bounds in Statistical Learning Theory
-    Principal Investigator(English) : | Dr Caponnetto, Andrea
     Fund Approved :           | 540,000
-    Project Status :          | Completed
-    Completion Date :         | 31-7-2013
     Project Objectives :      | ...
+
+Completed projects with a submitted completion report carry extra rows whose VALUE is
+itself a nested table rather than plain text — most importantly the Research Output
+section (peer-reviewed publications, conference presentations). Those are extracted as
+a list of {column: value} dicts instead of being flattened into one text blob, so
+publication data isn't lost. A nested table that's just a plain bulleted list with no
+header row (e.g. Project Objectives) still falls back to plain concatenated text.
 
 Every label/value pair found is kept in `raw_fields` regardless of whether it's in
 FIELD_KEYWORDS below, so nothing is silently dropped even if a page has an unexpected
-field.
+field. Projects without a given section (e.g. no completion report yet, or an older
+project with fewer fields) simply get "" for that field — never an error.
 
 Usage:
     python parse_details.py
@@ -52,29 +57,81 @@ FIELD_KEYWORDS = {
     "completion date": "end_date",
     "project objectives": "objectives",
     "abstract as per original application": "abstract",
+    "realisation of objectives": "realisation_of_objectives",
+    "summary of objectives addressed": "objectives_addressed",
+    "major findings and research outcome": "major_findings",
+    "potential for further development": "potential_development",
     "layman's summary": "layman_summary",
+    "peer-reviewed journal publication": "publications",
+    "recognized international conference": "conferences",
+    "other impact": "other_impact",
 }
 
 
-def extract_label_value_pairs(soup: BeautifulSoup) -> dict[str, str]:
-    """Best-effort: RGC pages are commonly <table> layouts with a label cell followed
-    by a value cell. Falls back gracefully if that's not how a given page is built."""
+def get_outer_table(soup: BeautifulSoup):
+    """The main Project Details table is the first <table border="1"> in the document.
+    Several NESTED tables (Objectives, Publications, Conferences, ...) also carry
+    border="1", but only ever appear later, inside this table's own cells."""
+    return soup.find("table", attrs={"border": "1"})
+
+
+def extract_nested_table_rows(td) -> list[dict] | None:
+    """If `td` contains a nested table shaped like a real data table (a header row
+    followed by data rows with the same number of columns), extract it as a list of
+    {column_header: value} dicts — this is how Research Output publications and
+    conference presentations are laid out. Returns None if there's no nested table, or
+    it isn't a clean uniform table (e.g. Project Objectives is just repeated
+    single-cell rows with no header row at all) — callers should fall back to plain
+    text in that case."""
+    inner_table = td.find("table")
+    if inner_table is None:
+        return None
+    rows = inner_table.select(":scope > tbody > tr") or inner_table.select(":scope > tr")
+    if len(rows) < 2:
+        return None
+    header_cells = rows[0].find_all(["td", "th"], recursive=False)
+    if len(header_cells) < 2:
+        return None
+    headers = [c.get_text(strip=True) or f"col{i + 1}" for i, c in enumerate(header_cells)]
+    records = []
+    for row in rows[1:]:
+        cells = row.find_all(["td", "th"], recursive=False)
+        if len(cells) != len(headers):
+            return None  # not a clean uniform table — bail out, caller falls back to plain text
+        records.append({h: c.get_text(" ", strip=True) for h, c in zip(headers, cells)})
+    return records or None
+
+
+def extract_label_value_pairs(soup: BeautifulSoup) -> dict:
+    """Walk only the direct rows of the main Project Details table (not recursively —
+    that would also pick up every row of every nested sub-table as its own spurious
+    top-level label/value pair)."""
+    outer = get_outer_table(soup)
+    if outer is None:
+        return {}
+    rows = outer.select(":scope > tbody > tr") or outer.select(":scope > tr")
     pairs = {}
-    for row in soup.find_all("tr"):
-        cells = row.find_all(["td", "th"])
-        if len(cells) >= 2:
-            label = cells[0].get_text(strip=True).rstrip(":")
-            value = cells[1].get_text(" ", strip=True)
-            if label and value:
-                pairs[label] = value
+    for row in rows:
+        cells = row.find_all(["td", "th"], recursive=False)
+        if len(cells) < 2:
+            continue
+        label = cells[0].get_text(strip=True).rstrip(":")
+        if not label:
+            continue
+        table_rows = extract_nested_table_rows(cells[1])
+        value = table_rows if table_rows else cells[1].get_text(" ", strip=True)
+        if value:
+            pairs[label] = value
     return pairs
 
 
-def map_known_fields(raw_fields: dict[str, str]) -> dict[str, str]:
+def map_known_fields(raw_fields: dict) -> dict:
     # Every record gets every known field name, "" when this page didn't have it — so
     # every row in parsed.jsonl has the same set of columns (important for loading this
     # into pandas/Excel as a clean table, e.g. an older project with no Abstract field
-    # still gets "abstract": "" instead of the key being missing entirely).
+    # still gets "abstract": "" instead of the key being missing entirely). Some values
+    # here are now lists of dicts (publications, conferences, objectives_addressed)
+    # rather than plain strings — to_csv.py JSON-encodes those for the spreadsheet.
     mapped = {field_name: "" for field_name in dict.fromkeys(FIELD_KEYWORDS.values())}
     for label, value in raw_fields.items():
         label_lower = label.lower()
