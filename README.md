@@ -1,30 +1,61 @@
 # Funding Size and Research Outcomes — RGC Data Collection
 
-Collects completed RGC-funded projects (2000–present) by downloading each project's
-official detail page HTML and parsing it into JSON, per the project plan (see `data/`
-layout below). NIH and NSF collection will follow the same raw → parsed → linked
-pattern once RGC is working.
+Collects completed RGC-funded projects by year (2006–present is what RGC's own search
+supports; the site is not reachable further back) into structured JSON/CSV. NIH and NSF
+collection will follow the same pattern once RGC is fully done.
+
+## How the scraping actually works
+
+RGC's Project Enquiry site (`cerg1.ugc.edu.hk`) has no API — everything is an old
+JSP application from the early 2000s. There is **no manual browser step and no
+per-page HTML saving by hand**. The whole pipeline is automated:
+
+1. **Search** (`search_rgc.py`) — RGC's search results and "next page" links turn out
+   to be a JavaScript function that fills in a hidden form and POSTs it. This script
+   replicates that POST directly, for every page of a given Award Year's results, and
+   collects every project's ID from them. It also saves a copy of each raw
+   search-results page under `data/raw/rgc/search_pages/` purely as an audit trail —
+   this is not the primary way any data gets collected, just a record of what was
+   searched.
+2. **Download** (`download_details.py`) — for each project ID found, this does one
+   plain HTTP GET of that project's own detail page and saves the raw HTML under
+   `data/raw/rgc/html/<proj_id>.html`. This is the actual "one file per project"
+   download step — there is no separate concept of downloading search-result pages
+   here, only individual project pages.
+3. **Parse** (`parse_details.py`) — reads every saved detail-page HTML file and
+   extracts structured fields (title, PI, institution, amount, status, dates,
+   abstract, and — for completed projects with a submitted report — publications and
+   conference presentations as structured lists) into one combined
+   `data/raw/rgc/parsed.jsonl`.
+4. **Export** (`to_csv.py`) — converts `parsed.jsonl` into a spreadsheet-friendly CSV,
+   filtered to one Award Year at a time via that year's `links_<year>.txt` file (the
+   authoritative record of which projects were found under that specific search).
+
+Both `search_rgc.py` and `download_details.py` retry transient network errors (this is
+an old, occasionally flaky government server) before giving up on a single page/project
+— they don't abort the whole run over one bad request.
 
 ## Data layout
 
 ```
 data/
   raw/rgc/
-    search_pages/   # saved HTML of search-results pages
+    search_pages/    # audit copies of raw search-results pages (not primary data)
     html/            # one file per project detail page, downloaded verbatim, never edited
-    parsed.jsonl      # one JSON record per project, generated from html/
+    parsed.jsonl      # one JSON record per project, generated from html/ (cumulative, all years)
+    parsed_<year>.csv # one CSV per Award Year, for opening in Excel/Numbers/Sheets
   linked/            # later: grant + OpenAlex outcome linkage
   audit/
     collection_log.jsonl   # every fetch attempt, success or failure
 ```
 
-Raw/parsed data is git-ignored (see `.gitignore`) — only the code and folder structure
-are committed. Everyone regenerates their own local copy.
+Raw/parsed data and CSVs are git-ignored — only the code and folder structure are
+committed. Everyone collecting data regenerates their own local copy.
 
-## Setup (VS Code, run locally — not in this cloud session)
+## Setup (VS Code, run locally)
 
-The RGC site (`cerg1.ugc.edu.hk`) isn't reachable from this cloud sandbox's network
-policy, so steps 2–4 below must run on your own machine.
+The RGC site isn't reachable from a cloud sandbox's network policy, so this must run on
+your own machine.
 
 1. Install [VS Code](https://code.visualstudio.com/) and the Python extension.
 2. Clone the repo and check out this branch:
@@ -39,40 +70,29 @@ policy, so steps 2–4 below must run on your own machine.
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
-4. Open the folder in VS Code (`code .`), open a terminal there for the steps below.
+4. Open the folder in VS Code (`code .`), open a terminal in `scripts/rgc/` for the
+   commands below.
 
-## Running the RGC crawler
+## Running the RGC crawler, one Award Year at a time
 
-All commands run from `scripts/rgc/`.
+```
+python search_rgc.py --years 2016 --status C --out links_2016.txt
+caffeinate -i python download_details.py --links links_2016.txt   # caffeinate: don't let the Mac sleep mid-run
+python parse_details.py
+python to_csv.py --links links_2016.txt
+```
 
-1. **Search manually in your browser** at the RGC Project Enquiry page
-   (`cerg1.ugc.edu.hk/cergprod/...`), e.g. filter by year/scheme/status. Save the
-   results page (`File > Save Page As...` → HTML only) or copy its URL if it's a plain
-   GET link.
-2. **Extract detail-page links:**
-   ```
-   python fetch_search.py --file path/to/saved_results.html --out links.txt
-   ```
-   Open `links.txt` — if it's empty, open the saved HTML, find a real project link's
-   `href`, and adjust `LINK_PATTERN` in `fetch_search.py` to match it.
-3. **Download each project's HTML:**
-   ```
-   python download_details.py --links links.txt
-   ```
-   Safe to re-run — already-downloaded files are skipped. Failures are logged to
-   `data/audit/collection_log.jsonl`.
-4. **Parse into JSON:**
-   ```
-   python parse_details.py
-   ```
-   Inspect a few lines of `data/raw/rgc/parsed.jsonl`. If `title`/`pi`/`institution`/
-   `amount` are empty but `raw_fields` has the data under different labels, fix
-   `FIELD_KEYWORDS` in `parse_details.py`.
+- `--status C` = Completed projects only (matches this project's scope: completed
+  awards with official results). Use `--status ""` for every status.
+- `--years` also accepts a range, e.g. `--years 2006-2026`, to search multiple years in
+  one command — used per-year here so each year's collection can be checked before
+  moving to the next.
+- Repeat this same four-command block for each year. `download_details.py` skips
+  anything already downloaded, so re-running any step is always safe.
 
 ## Next steps
 
-- Repeat search + download across all target years/schemes to cover 2000–present.
-- Once a sample of real detail-page HTML exists, share it so the parser's field
-  mapping can be corrected precisely instead of guessed.
+- Continue year by year through the full 2006–2026 range.
 - Validate collected counts against RGC's summary PDFs.
 - Cross-reference outputs against OpenAlex (see project plan, later stage).
+- Same raw → parsed → CSV pattern for NIH and NSF once RGC is complete.
