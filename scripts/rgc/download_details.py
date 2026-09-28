@@ -10,8 +10,11 @@ so it's safe to re-run after a partial run or after adding new links.
 """
 import argparse
 import hashlib
+import time
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+import requests
 
 from common import REPO_ROOT, fetch_html, save_text
 
@@ -25,6 +28,20 @@ def slug_for(url: str) -> str:
     if proj_id:
         return proj_id
     return hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+
+
+def fetch_with_retry(url: str, attempts: int = 3) -> str:
+    """A network blip shouldn't permanently fail a download — retry a few times before
+    giving up, same approach as search_rgc.py's page fetches."""
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            return fetch_html(url)
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(2)
+    raise last_exc
 
 
 def main():
@@ -42,11 +59,11 @@ def main():
             skipped += 1
             continue
         try:
-            html = fetch_html(url)
+            html = fetch_with_retry(url)
             save_text(out_path, html)
             downloaded += 1
         except Exception as exc:
-            print(f"[{i}/{len(urls)}] FAILED {url}: {exc}")
+            print(f"[{i}/{len(urls)}] FAILED after retries {url}: {exc}")
             failed += 1
             continue
         if i % 25 == 0:
