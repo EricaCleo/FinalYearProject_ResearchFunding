@@ -116,18 +116,28 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
 
     url = f"{BASE_URL}/{endpoint.lstrip('/')}"
 
+    last_detail = "unknown error"
     for attempt in range(max_retries):
         try:
             response = requests.get(url, params=params, timeout=60)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            last_detail = f"network error ({exc})"
+            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
             time.sleep(min(2 ** attempt, 30))
             continue
 
         if response.status_code == 429:
+            last_detail = "HTTP 429 rate limited"
+            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
             time.sleep(min(2 ** attempt, 30))
             continue
 
-        response.raise_for_status()
+        if not response.ok:
+            last_detail = f"HTTP {response.status_code}: {response.text[:300]}"
+            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
+            time.sleep(min(2 ** attempt, 30))
+            continue
+
         return response.json()
 
-    raise RuntimeError(f"OpenAlex request failed after {max_retries} attempts: {url}")
+    raise RuntimeError(f"OpenAlex request failed after {max_retries} attempts: {url} ({last_detail})")
