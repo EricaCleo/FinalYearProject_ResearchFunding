@@ -28,7 +28,8 @@ YEAR_RE = re.compile(r"(20\d{2})")
 CATEGORICAL_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 SEQUENTIAL_CMAP = "Blues"
 
-MISSINGNESS_COLUMNS = ["grant_id", "pi", "institution", "amount", "title", "abstract", "end_date"]
+MISSINGNESS_COLUMNS = ["grant_id", "project_number", "pi", "institution", "amount", "title", "abstract",
+                        "end_date", "exercise_year"]
 ID_COLUMN = "grant_id"
 
 
