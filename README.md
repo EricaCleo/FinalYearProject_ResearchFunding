@@ -90,6 +90,46 @@ python to_csv.py --links links_2016.txt
 - Repeat this same four-command block for each year. `download_details.py` skips
   anything already downloaded, so re-running any step is always safe.
 
+## Pre-matching data checks (Section 4A of the supervisor's guide)
+
+Required before any OpenAlex matching work: four diagnostic figures plus a
+duplicate-record table, run directly against the collected per-year RGC CSVs.
+Script: `scripts/rgc/pre_matching_checks.py`. Outputs are committed (not
+git-ignored, unlike raw data) to `reports/pre_matching_checks/`, since these
+figures are themselves a deliverable.
+
+```
+cd scripts/rgc
+python pre_matching_checks.py --input-dir path/to/per-year/csvs --out-dir ../../reports/pre_matching_checks
+```
+
+Produces: annual project counts (Fig 1), a year-by-field missing-rate heatmap
+(Fig 2), scheme and panel category distribution by year (Fig 3a/3b, plus a
+harmonized Fig 3c — see below), funding-amount distribution by year (Fig 4),
+and a duplicate-record table. See `reports/pre_matching_checks/README.md` for
+the full write-up of findings, including two investigated-and-explained
+anomalies: Early Career Scheme/HSSPFS show zero count before 2011/2012
+(RGC's funding-scheme search code meant GRF-only pre-2012), and the
+"Business Studies" panel shows zero count before 2011 (those projects are
+correctly captured under `field = "Business Studies"` rather than `panel`,
+since RGC only split it into its own top-level panel around 2011 — verified
+against RGC's live site). Neither is a collection error.
+
+## Exploratory charts
+
+Supervisor-requested charts for general understanding of the collected data,
+separate from the mandatory Section 4A checks above. Script:
+`scripts/rgc/exploratory_charts.py`. Outputs committed to
+`reports/exploratory_charts/`.
+
+```
+cd scripts/rgc
+python exploratory_charts.py --input-dir path/to/per-year/csvs --out-dir ../../reports/exploratory_charts
+```
+
+Produces: total funding awarded by year (Fig A), total funding and grant
+count by institution (Fig B), and mean/median grant size trend by year (Fig C).
+
 ## Phase 2: matching RGC PIs to OpenAlex authors
 
 RGC gives a PI's name on paper; to measure what they actually published, we need their
@@ -128,8 +168,8 @@ for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor pr
 
 ## Next steps
 
-- Continue RGC collection year by year through the full 2006–2026 range (if not already done).
-- Validate collected counts against RGC's summary PDFs.
+- RGC collection (2006–2026) and Section 4A pre-matching checks are done — see
+  `reports/pre_matching_checks/`.
 - Finish manual review of the OpenAlex pilot batch, discuss open questions with supervisor
   (scope: solo vs. group PIs, handling multiple grants per PI, probable/ambiguous criteria).
 - Scale the matching pipeline to all PIs once the pilot process is validated.
