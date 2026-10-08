@@ -141,6 +141,37 @@ def figure_category_distribution(df: pd.DataFrame, out_dir: Path):
         plt.close(fig)
 
 
+def figure_panel_harmonized(df: pd.DataFrame, out_dir: Path):
+    """Supplementary chart, not a replacement for fig3b. RGC recorded Business
+    Studies as a sub-field under the 'Humanities, Social Sciences' panel before
+    splitting it into its own top-level panel around 2011 (confirmed against
+    RGC's live site and the raw scraped records -- see reports README). This
+    harmonizes panel using field as a fallback so Business Studies reads
+    consistently across the full year range; fig3b is left untouched as the
+    literal, unmodified panel column."""
+    if "panel" not in df.columns or "field" not in df.columns:
+        return
+
+    harmonized = df["field"].where(df["field"] == "Business Studies", df["panel"])
+    pivot = pd.crosstab(df["award_year"], harmonized)
+    pivot.to_csv(out_dir / "fig3c_panel_harmonized_by_year.csv")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bottom = pd.Series(0, index=pivot.index)
+    for i, category in enumerate(pivot.columns):
+        color = CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)]
+        ax.bar(pivot.index, pivot[category], bottom=bottom, label=category, color=color)
+        bottom = bottom + pivot[category]
+    ax.set_xlabel("Award year")
+    ax.set_ylabel("Count")
+    ax.set_title("Figure 3c: RGC panel by year (harmonized -- Business Studies via 'field' fallback pre-2011)")
+    ax.legend(frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out_dir / "fig3c_panel_harmonized_by_year.png", dpi=150)
+    plt.close(fig)
+
+
 def figure_funding_distribution(df: pd.DataFrame, out_dir: Path):
     df = df.copy()
     df["amount_parsed"] = df["amount"].apply(parse_amount)
@@ -248,6 +279,9 @@ def main():
 
     print("\nFigure 3: category distribution (scheme, panel)")
     figure_category_distribution(df, out_dir)
+
+    print("\nFigure 3c: harmonized panel (supplementary, not a replacement for 3b)")
+    figure_panel_harmonized(df, out_dir)
 
     print("\nFigure 4: funding distribution")
     figure_funding_distribution(df, out_dir)
