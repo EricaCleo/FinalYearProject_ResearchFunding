@@ -142,13 +142,14 @@ def figure_category_distribution(df: pd.DataFrame, out_dir: Path):
 
 
 def figure_panel_harmonized(df: pd.DataFrame, out_dir: Path):
-    """Supplementary chart, not a replacement for fig3b. RGC recorded Business
-    Studies as a sub-field under the 'Humanities, Social Sciences' panel before
-    splitting it into its own top-level panel around 2011 (confirmed against
-    RGC's live site and the raw scraped records -- see reports README). This
-    harmonizes panel using field as a fallback so Business Studies reads
-    consistently across the full year range; fig3b is left untouched as the
-    literal, unmodified panel column."""
+    """Supplementary chart, not a replacement for fig3b. Confirmed directly
+    against a live RGC project detail page: before ~2011, Business Studies
+    projects are filed with Panel="Humanities, Social Sciences" and Subject
+    Area="Business Studies" (the 'field' column here); RGC only made Business
+    Studies its own top-level Panel value from ~2011 onward. This reclassifies
+    those pre-2011 records as Business Studies so the chart reads consistently
+    across the full year range; fig3b is left untouched as the literal,
+    unmodified Panel column exactly as RGC's own pages print it."""
     if "panel" not in df.columns or "field" not in df.columns:
         return
 
@@ -164,7 +165,7 @@ def figure_panel_harmonized(df: pd.DataFrame, out_dir: Path):
         bottom = bottom + pivot[category]
     ax.set_xlabel("Award year")
     ax.set_ylabel("Count")
-    ax.set_title("Figure 3c: RGC panel by year (harmonized -- Business Studies via 'field' fallback pre-2011)")
+    ax.set_title("Figure 3c: RGC panel by year (Business Studies reclassified from Subject Area, pre-2011)")
     ax.legend(frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
