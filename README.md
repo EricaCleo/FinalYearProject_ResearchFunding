@@ -90,9 +90,48 @@ python to_csv.py --links links_2016.txt
 - Repeat this same four-command block for each year. `download_details.py` skips
   anything already downloaded, so re-running any step is always safe.
 
+## Phase 2: matching RGC PIs to OpenAlex authors
+
+RGC gives a PI's name on paper; to measure what they actually published, we need their
+real OpenAlex author profile. Since many people share a name, this is NOT automatic — the
+guide this is built from (`RGC_to_OpenAlex_Author_Linkage_Guide.md`) requires a human to
+review and classify every match. All scripts live in `scripts/openalex/`.
+
+1. **Combine** (`combine_rgc_data.py`) — merges all per-year RGC CSVs into one
+   `rgc_awards.csv`, deduped by `project_id`, with `award_year` taken from the filename
+   (not the unreliable "Exercise Year" field — see script docstring).
+2. **Search candidates** (`search_candidates.py`) — for each unique PI, searches OpenAlex
+   by name variants and gathers evidence (name similarity, institution match, topics,
+   ORCID, works/citation counts) for every candidate author found. This does NOT decide
+   who's correct — it only collects evidence. Outputs `author_candidates_pilot.csv` and
+   `author_candidates_for_review.csv` (same data plus empty columns for your decisions).
+3. **Triage** (`triage_candidates.py`) — optional helper that groups the review CSV by PI
+   and flags each as `likely_confirmed` (one clear institution-matched candidate) or
+   `needs_review` (multiple candidates share the institution — these need the full manual
+   check), so review time goes to the ambiguous PIs first.
+4. **Manual review** — for each PI, open the flagged candidate(s) on openalex.org, check
+   institution/ORCID/actual paper topics against the grant, and fill in
+   `reviewer_decision` (confirmed/probable/ambiguous/not_found) in
+   `author_candidates_for_review.csv`. This step cannot be automated — see the guide.
+5. **(Next, not yet built)** — for confirmed matches, download each author's full works
+   list and citation counts from OpenAlex, then join against `rgc_awards.csv` by PI to
+   analyze funding size vs. research output.
+
+```
+python combine_rgc_data.py --input-dir path/to/per-year/csvs --out rgc_awards.csv
+python search_candidates.py --input unique_pis.csv --pilot-size 40
+python triage_candidates.py --input author_candidates_for_review.csv --out triage_summary.csv
+```
+
+OpenAlex needs no account for normal use. Optionally set `OPENALEX_MAILTO` (your email)
+for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor provides one.
+
 ## Next steps
 
-- Continue year by year through the full 2006–2026 range.
+- Continue RGC collection year by year through the full 2006–2026 range (if not already done).
 - Validate collected counts against RGC's summary PDFs.
-- Cross-reference outputs against OpenAlex (see project plan, later stage).
+- Finish manual review of the OpenAlex pilot batch, discuss open questions with supervisor
+  (scope: solo vs. group PIs, handling multiple grants per PI, probable/ambiguous criteria).
+- Scale the matching pipeline to all PIs once the pilot process is validated.
+- Build the publication/citation download step for confirmed matches.
 - Same raw → parsed → CSV pattern for NIH and NSF once RGC is complete.
