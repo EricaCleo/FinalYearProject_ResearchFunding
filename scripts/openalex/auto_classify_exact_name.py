@@ -1,15 +1,23 @@
 """
-Stage 4 of the automated PI matching pipeline: exact name-token match +
-works_count filter.
+Stage 3 (final stage) of the automated PI matching pipeline: exact
+name-token match + works_count filter.
 
-Stages 1-3 used fuzzy name_similarity (rapidfuzz ratio), which can score a
-clearly different name highly just for sharing a surname and similar length
--- caught in the pilot: "Yu Liu" scored high against "Qiang Liu", and
-"Zhanhu Guo" / "Xing Hua Zheng" (extra name tokens) scored high against
-"Zaiping Guo" / "Xing Zheng". This stage uses an exact match instead: the
-candidate's name, tokenized and lowercased, must be the EXACT SAME SET of
-words as the PI's cleaned name (order-independent, so "Hong Yan" matches
-"Yan Hong"), not just similar.
+Stages 1-2 (institution, ORCID) can leave several candidates tied. An
+earlier version of this pipeline broke ties with fuzzy name_similarity
+(rapidfuzz ratio) and, separately, a topic-keyword-overlap check -- both
+were dropped. Fuzzy similarity was tested against the pilot data and found
+unreliable: clearly wrong candidates ("Yu Liu" vs "Qiang Liu", "Zhanhu Guo"
+vs "Zaiping Guo", "Xing Hua Zheng" vs "Xing Zheng") scored as high as real
+matches, because OpenAlex's own alternate-name data is noisy -- no
+threshold separates real from false. Topic overlap was dropped because it
+leans on an OpenAlex-generated label (the candidate's topics), not
+anything scraped from RGC, so it added opinion without adding reliable
+evidence once name matching was already exact.
+
+This stage uses an EXACT match instead: the candidate's name, tokenized
+and lowercased, must be the exact same SET of words as the PI's cleaned
+name (order-independent, so "Hong Yan" matches "Yan Hong"), not just
+similar. This had zero false positives across the full 40-PI pilot.
 
 Rule per PI, among institution-matched candidates with an exact name-token
 match:
@@ -17,11 +25,13 @@ match:
   - 2+ exact-name candidates                    -> auto-confirm the one with
                                                     the highest works_count,
                                                     ONLY if it's not tied
-  - 0 exact-name candidates                     -> still unresolved
+  - 0 exact-name candidates                     -> still unresolved (e.g. the
+                                                    PI's real OpenAlex name is
+                                                    abbreviated to initials)
 
 Usage:
-    python auto_classify_exact_name.py --input needs_stage4_filtering.csv \
-        --out-crosswalk pi_openalex_crosswalk_stage4.csv \
+    python auto_classify_exact_name.py --input needs_stage3_filtering.csv \
+        --out-crosswalk pi_openalex_crosswalk_stage3.csv \
         --out-unresolved still_unresolved.csv
 """
 import argparse
@@ -70,8 +80,8 @@ def classify_pi(rows: list[dict]) -> dict | None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True, help="needs_stage4_filtering.csv from auto_classify_topic_workcount.py")
-    parser.add_argument("--out-crosswalk", default="pi_openalex_crosswalk_stage4.csv", help="Newly confirmed matches")
+    parser.add_argument("--input", required=True, help="needs_stage3_filtering.csv from auto_classify_orcid.py")
+    parser.add_argument("--out-crosswalk", default="pi_openalex_crosswalk_stage3.csv", help="Newly confirmed matches")
     parser.add_argument("--out-unresolved", default="still_unresolved.csv", help="PIs no automated filter could resolve")
     args = parser.parse_args()
 
@@ -110,7 +120,7 @@ def main():
 
     n_pis = len(by_pi)
     n_unresolved_pis = len(set((r["pi_name_raw"], r["rgc_institution"]) for r in unresolved_rows))
-    print(f"{n_pis} PIs entered stage 4")
+    print(f"{n_pis} PIs entered stage 3")
     print(f"  {len(crosswalk_rows)} confirmed by exact name match -> {args.out_crosswalk}")
     print(f"  {n_unresolved_pis} PIs still unresolved ({len(unresolved_rows)} candidate rows) -> {args.out_unresolved}")
 
