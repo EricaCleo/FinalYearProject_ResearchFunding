@@ -4,12 +4,25 @@ works-count filter.
 
 Takes the PIs that stages 1 (institution) and 2 (ORCID) couldn't resolve, and
 applies the same reasoning used to manually confirm CAI Wenlong: among
-institution-matched candidates, the correct one is usually both (a) the most
-complete/established profile (highest works_count -- duplicate/fragment
-profiles tend to be small) AND (b) topically relevant to the actual grant
-(shared keywords between OpenAlex topics and the RGC project title).
+institution-matched, EXACT-name-matched candidates, the correct one is
+usually both (a) the most complete/established profile (highest works_count
+-- duplicate/fragment profiles tend to be small) AND (b) topically relevant
+to the actual grant (shared keywords between OpenAlex topics and the RGC
+project title).
 
-Rule per PI, among their institution-matched candidates:
+Name matching here uses an EXACT name-token match (same set of words,
+order-independent), not the fuzzy name_similarity score. rapidfuzz's ratio()
+was tested against the pilot data and found unreliable for this dataset:
+clearly wrong candidates ("Kai You Wang", "Zhong Lin Wang") scored as high as
+100% against completely different real PIs, because the scoring function
+(in common.py's get_name_similarity) takes the max across an author's
+OpenAlex display_name AND all of their display_name_alternatives, and that
+alternates list is itself noisy. An earlier version of this script used a
+fuzzy floor instead and nearly auto-confirmed the wrong person for
+"Prof LIN, Carol Sze Ki" as a result -- see git history. Exact token
+matching had zero false positives in the same pilot data.
+
+Rule per PI, among their institution-matched, exact-name-matched candidates:
   - exactly one candidate is BOTH the highest works_count AND has at least
     one shared keyword with the project title  -> auto "confirmed"
   - otherwise                                   -> still unresolved, needs stage 4
@@ -44,19 +57,25 @@ def tokenize(text: str) -> set[str]:
     return {w for w in words if w not in STOPWORDS}
 
 
-NAME_SIMILARITY_FLOOR = 85.0
+def name_tokens(name: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]+", (name or "").lower()))
 
 
 def classify_pi(rows: list[dict]) -> dict | None:
+    pi_tokens = name_tokens(rows[0].get("pi_name_clean", ""))
+    if not pi_tokens:
+        return None
+
     # Institution match alone isn't enough to even consider a candidate here --
-    # a prolific, loosely-name-matched researcher at the same institution can
+    # a prolific, same-institution researcher with a DIFFERENT name can
     # otherwise beat the real, smaller-profile match on works_count alone
-    # (caught in the pilot: "C. Jeffrey Brinker", name_sim=54.5, beat the
-    # correct "Carol Sze Ki Lin", name_sim=100, purely on works_count).
+    # (caught in the pilot: "C. Jeffrey Brinker" beat the correct
+    # "Carol Sze Ki Lin" purely on works_count, under an earlier version of
+    # this script that used fuzzy name_similarity instead of exact matching).
     candidates = [
         r for r in rows
         if r.get("institution_match") == "1"
-        and float(r.get("name_similarity") or 0) >= NAME_SIMILARITY_FLOOR
+        and name_tokens(r.get("candidate_display_name", "")) == pi_tokens
     ]
     if not candidates:
         return None
@@ -82,8 +101,8 @@ def classify_pi(rows: list[dict]) -> dict | None:
             "candidate_author_id": candidate["candidate_author_id"],
             "candidate_display_name": candidate["candidate_display_name"],
             "candidate_orcid": candidate.get("candidate_orcid", ""),
-            "reason": f"name_similarity {candidate['name_similarity']}, highest works_count ({best_works}) "
-                      f"among institution+name-matched candidates, shared topic keywords with project title: "
+            "reason": f"Exact name-token match, highest works_count ({best_works}) "
+                      f"among institution+exact-name-matched candidates, shared topic keywords with project title: "
                       f"{', '.join(sorted(shared))}",
         }
 
