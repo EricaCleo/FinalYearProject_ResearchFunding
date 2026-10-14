@@ -21,27 +21,29 @@ similar. This had zero false positives across the full 40-PI pilot.
 
 When 2+ candidates are left tied on exact name + institution, works_count
 only tells you who's more PROLIFIC, not who's CORRECT -- it's only valid
-evidence if the tied candidates are plausibly fragments of one real person
-(OpenAlex's disambiguation algorithm splitting one identity into several
-thin profiles), not genuinely different real people who happen to share a
-name. Checked against the pilot: 8 of 14 multi-candidate ties had two or
-more DIFFERENT, both-populated ORCIDs among the tied candidates -- since
-ORCID is self-registered per human, that's strong evidence of distinct real
-people, not fragments, and works_count would have been guessing rather than
-resolving an identity. So works_count is now only used as a tiebreak when
-the ORCIDs among tied candidates are consistent with one fragmented
-identity (same ORCID repeated, or no ORCID at all); a genuine ORCID
-conflict is left unresolved instead.
+evidence once we have PROOF the tied candidates are fragments of one real
+person, not a guess. The only such proof available is 2+ candidates sharing
+the literal SAME non-empty ORCID (self-registered per human, so identical
+ORCID guarantees identical person). An earlier version of this script
+treated "no conflicting ORCIDs" as safe, which wrongly included cases where
+nobody had an ORCID at all, or only one candidate did -- that's missing
+information, not proof of a single identity, and is a materially weaker
+(and incorrect) standard. Now works_count only breaks a tie WITHIN a group
+of candidates proven identical by a shared ORCID; everything else --
+including "nobody has an ORCID" -- is left unresolved rather than guessed.
 
 Rule per PI, among institution-matched candidates with an exact name-token
 match:
   - exactly 1 exact-name candidate                -> auto "confirmed"
-  - 2+ exact-name candidates, consistent ORCIDs    -> auto-confirm the one
-                                                       with the highest
-                                                       works_count, unless tied
-  - 2+ exact-name candidates, conflicting ORCIDs   -> still unresolved
-                                                       (likely different
-                                                       real people)
+  - 2+ candidates share one ORCID (proven identity) -> auto-confirm the one
+                                                        with the highest
+                                                        works_count among
+                                                        that proven group,
+                                                        unless tied
+  - no such proven-identity group exists           -> still unresolved
+                                                        (including when no
+                                                        candidate has an
+                                                        ORCID at all)
   - 0 exact-name candidates                        -> still unresolved (e.g.
                                                        the PI's real OpenAlex
                                                        name is abbreviated to
@@ -80,24 +82,32 @@ def classify_pi(rows: list[dict]) -> dict | None:
         reason = "Exact name-token match (institution-matched), only one such candidate"
     else:
         # works_count only tells you who's more PROLIFIC, not who's CORRECT --
-        # it's only valid evidence if the tied candidates are plausibly
-        # fragments of the same real person (OpenAlex's disambiguation
-        # algorithm splitting one identity into several thin profiles). Two
-        # different, both-populated ORCIDs among the tied candidates is
-        # strong evidence they're actually two different real people who
-        # happen to share a name -- ORCID is self-registered per human, so
-        # that's not something to break with a popularity contest.
-        orcids = {r.get("candidate_orcid") for r in exact_matches if r.get("candidate_orcid")}
-        if len(orcids) > 1:
-            return None  # likely different real people, genuinely ambiguous
+        # it's only valid evidence if the tied candidates are PROVEN
+        # fragments of the same real person. The only positive proof of that
+        # is 2+ candidates sharing the literal SAME non-empty ORCID (ORCID is
+        # self-registered per human, so identical ORCID = same human,
+        # guaranteed). The absence of a conflict is NOT the same as proof:
+        # if nobody has an ORCID, or only one candidate happens to have one,
+        # that's simply missing information, not evidence they're one
+        # person -- treating it as "safe" was the earlier bug here. Only
+        # resolve among the candidates that share a duplicated ORCID.
+        orcid_counts = defaultdict(list)
+        for r in exact_matches:
+            orcid = r.get("candidate_orcid")
+            if orcid:
+                orcid_counts[orcid].append(r)
+        duplicated = [group for group in orcid_counts.values() if len(group) > 1]
+        if len(duplicated) != 1:
+            return None  # no proven single identity among the tied candidates
 
-        works_counts = [int(r.get("works_count") or 0) for r in exact_matches]
+        proven_group = duplicated[0]
+        works_counts = [int(r.get("works_count") or 0) for r in proven_group]
         best = max(works_counts)
         if works_counts.count(best) > 1:
-            return None  # genuine tie even among exact-name matches, don't guess
-        candidate = exact_matches[works_counts.index(best)]
-        reason = (f"Exact name-token match ({len(exact_matches)} candidates, consistent ORCID evidence "
-                  f"for being fragments of one identity), highest works_count ({best})")
+            return None  # tie even within the proven-same-identity group
+        candidate = proven_group[works_counts.index(best)]
+        reason = (f"Exact name-token match, {len(proven_group)} candidates share the same ORCID "
+                  f"(proven single identity), highest works_count among them ({best})")
 
     return {
         "decision": "confirmed",
