@@ -28,8 +28,7 @@ YEAR_RE = re.compile(r"(20\d{2})")
 CATEGORICAL_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 SEQUENTIAL_CMAP = "Blues"
 
-MISSINGNESS_COLUMNS = ["grant_id", "project_number", "pi", "institution", "amount", "title", "abstract",
-                        "end_date", "exercise_year"]
+INTERNAL_COLUMNS = {"award_year", "source_file"}
 ID_COLUMN = "grant_id"
 
 
@@ -88,24 +87,22 @@ def figure_annual_counts(df: pd.DataFrame, out_dir: Path):
 
 def figure_missingness(df: pd.DataFrame, out_dir: Path):
     years = sorted(df["award_year"].unique())
-    missing_rate = pd.DataFrame(index=years, columns=MISSINGNESS_COLUMNS, dtype=float)
+    columns = [c for c in df.columns if c not in INTERNAL_COLUMNS]
+    missing_rate = pd.DataFrame(index=years, columns=columns, dtype=float)
 
     for year in years:
         year_df = df[df["award_year"] == year]
-        for col in MISSINGNESS_COLUMNS:
-            if col not in year_df.columns:
-                missing_rate.loc[year, col] = float("nan")
-                continue
+        for col in columns:
             blank = year_df[col].astype(str).str.strip().eq("")
             missing_rate.loc[year, col] = blank.mean() * 100
 
-    fig, ax = plt.subplots(figsize=(8, max(4, len(years) * 0.35)))
+    fig, ax = plt.subplots(figsize=(max(10, len(columns) * 0.55), max(4, len(years) * 0.35)))
     im = ax.imshow(missing_rate.values, aspect="auto", cmap=SEQUENTIAL_CMAP, vmin=0, vmax=100)
-    ax.set_xticks(range(len(MISSINGNESS_COLUMNS)))
-    ax.set_xticklabels(MISSINGNESS_COLUMNS, rotation=45, ha="right")
+    ax.set_xticks(range(len(columns)))
+    ax.set_xticklabels(columns, rotation=60, ha="right")
     ax.set_yticks(range(len(years)))
     ax.set_yticklabels(years)
-    ax.set_title("Figure 2: Missing-rate heatmap by year and field (%)")
+    ax.set_title(f"Figure 2: Missing-rate heatmap by year and field (%) -- all {len(columns)} scraped fields")
     fig.colorbar(im, ax=ax, label="% missing")
     fig.tight_layout()
     fig.savefig(out_dir / "fig2_missingness_heatmap.png", dpi=150)
