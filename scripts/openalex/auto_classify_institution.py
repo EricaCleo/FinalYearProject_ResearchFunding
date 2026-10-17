@@ -25,11 +25,17 @@ the institution appears anywhere in the candidate's OpenAlex affiliation
 history. That's a coarser signal than the guide's original manual-review
 process used; add a timing-aware stage if too many false positives turn up.
 
+A "not_found" PI's full candidate rows are also written to --out-no-exact-match
+(not just the PI name + reason in --out-not-found), so a later stage can
+still search them with a looser name comparison (e.g. initials vs. spelled-
+out given names) without re-querying OpenAlex.
+
 Usage:
     python auto_classify_institution.py --input author_candidates_pilot.csv \
         --out-crosswalk pi_openalex_crosswalk.csv \
         --out-stage2 needs_stage2_filtering.csv \
-        --out-not-found not_found.csv
+        --out-not-found not_found.csv \
+        --out-no-exact-match no_exact_match_candidates.csv
 """
 import argparse
 import csv
@@ -85,7 +91,9 @@ def main():
     parser.add_argument("--input", required=True, help="author_candidates_pilot.csv or similar from search_candidates.py")
     parser.add_argument("--out-crosswalk", default="pi_openalex_crosswalk.csv", help="Auto-confirmed matches")
     parser.add_argument("--out-stage2", default="needs_stage2_filtering.csv", help="Ambiguous cases for the next filter stage (full candidate rows kept)")
-    parser.add_argument("--out-not-found", default="not_found.csv", help="PIs with zero institution-matched candidates")
+    parser.add_argument("--out-not-found", default="not_found.csv", help="PIs with zero institution-matched candidates (summary)")
+    parser.add_argument("--out-no-exact-match", default="no_exact_match_candidates.csv",
+                         help="Same PIs as --out-not-found, but with full candidate rows kept for a later, looser-matching stage")
     args = parser.parse_args()
 
     with open(args.input, encoding="utf-8-sig") as f:
@@ -95,7 +103,7 @@ def main():
     for row in rows:
         by_pi[(row["pi_name_raw"], row["rgc_institution"])].append(row)
 
-    crosswalk_rows, not_found_rows, stage2_rows = [], [], []
+    crosswalk_rows, not_found_rows, no_exact_match_rows, stage2_rows = [], [], [], []
     for (pi_name_raw, rgc_institution), pi_rows in by_pi.items():
         result = classify_pi(pi_rows)
         base = {
@@ -108,6 +116,7 @@ def main():
             crosswalk_rows.append({**base, **result})
         elif result["decision"] == "not_found":
             not_found_rows.append({**base, "reason": result["reason"]})
+            no_exact_match_rows.extend(pi_rows)
         else:
             for pi_row in pi_rows:
                 stage2_rows.append(pi_row)
@@ -124,6 +133,12 @@ def main():
         writer.writeheader()
         writer.writerows(not_found_rows)
 
+    if no_exact_match_rows:
+        with open(args.out_no_exact_match, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(no_exact_match_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(no_exact_match_rows)
+
     if stage2_rows:
         with open(args.out_stage2, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(stage2_rows[0].keys()))
@@ -134,7 +149,8 @@ def main():
     n_stage2_pis = len(set((r["pi_name_raw"], r["rgc_institution"]) for r in stage2_rows))
     print(f"{n_pis} PIs total")
     print(f"  {len(crosswalk_rows)} confirmed by institution -> {args.out_crosswalk}")
-    print(f"  {len(not_found_rows)} not_found (no institution match) -> {args.out_not_found}")
+    print(f"  {len(not_found_rows)} not_found (no exact institution+name match) -> {args.out_not_found} "
+          f"(full candidate rows kept in {args.out_no_exact_match} for a later looser-matching stage)")
     print(f"  {n_stage2_pis} PIs need stage 2 filtering ({len(stage2_rows)} candidate rows) -> {args.out_stage2}")
 
 
