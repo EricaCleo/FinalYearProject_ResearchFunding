@@ -16,11 +16,20 @@ Research Output table (see scripts/rgc/parse_details.py) -- whatever the
 scraped header happened to be, so this reads any key containing "title"
 rather than assuming one exact column name.
 
-A candidate only counts as confirmed if their candidate_author_id appears in
-the real authorship list of a paper whose title, once normalized (lowercased,
-punctuation stripped), matches EXACTLY -- this does not use fuzzy/approximate
-title matching, same reasoning as never fuzzy-matching names: an approximate
-match could pick the wrong paper for a common title.
+Confirmed from real scraped data (2015_results.csv) that this field is
+usually headed "Title and Journal/Book" and its value is a COMBINED
+citation string -- the real title followed directly by the journal name,
+volume, and pages, e.g. "Recent Advances in ... Neurodegeneration.
+Frontiers in Aging Neuroscience 9: 128." -- not a pure title. Exact-equality
+comparison against OpenAlex's own (pure) title would therefore never match
+anything real. The real title is consistently the LEADING portion of this
+combined string across every citation format seen (period-separated,
+comma-separated, or quoted), so a candidate counts as confirmed if their
+candidate_author_id appears in the real authorship list of a paper whose
+normalized OpenAlex title is a PREFIX of the normalized scraped citation
+string -- still not fuzzy/approximate matching (the comparison is exact
+after normalization, just anchored at the start rather than the whole
+string), so an unrelated paper with a different title still can't match.
 
 Usage:
     python auto_classify_publication_match.py --input truly_unresolved.csv \
@@ -52,6 +61,19 @@ def normalize_title(title: str) -> str:
     title = (title or "").lower()
     title = re.sub(r"[^a-z0-9]+", "", title)
     return title
+
+
+def titles_match(openalex_title: str, rgc_citation: str) -> bool:
+    """rgc_citation may be a pure title or a combined "title + journal/volume/pages"
+    citation string (see module docstring) -- either way the real title is always
+    the leading portion, so this checks prefix containment rather than equality.
+    Requires a reasonably long title (>= 15 normalized chars) before trusting a
+    prefix match at all, so a short/generic OpenAlex title can't spuriously match
+    the start of an unrelated citation."""
+    openalex_norm = normalize_title(openalex_title)
+    if len(openalex_norm) < 15:
+        return False
+    return normalize_title(rgc_citation).startswith(openalex_norm)
 
 
 def extract_titles(publications_raw: str) -> list[str]:
@@ -104,13 +126,13 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
     for title in titles:
         works = search_work_by_title(title)
         for work in works:
-            if normalize_title(work.get("title", "")) == normalize_title(title):
+            if titles_match(work.get("title", ""), title):
                 checked_titles.append(title)
                 author_ids = extract_work_author_ids(work)
                 for r in rows:
                     if r.get("candidate_author_id") in author_ids:
                         matched_candidate_ids.add(r["candidate_author_id"])
-                break  # only the first exact-title-match work counts per title
+                break  # only the first title-match work counts per title
 
     if len(matched_candidate_ids) == 1:
         author_id = next(iter(matched_candidate_ids))
@@ -122,7 +144,7 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
             "openalex_display_names": candidate["candidate_display_name"],
             "openalex_orcid": candidate.get("candidate_orcid", ""),
             "reason": (f"Candidate's OpenAlex ID found in the real authorship list of a grant-resulting "
-                       f"publication found via exact title match ({len(checked_titles)} title(s) checked)"),
+                       f"publication found via title match ({len(checked_titles)} title(s) checked)"),
         }
 
     return None  # 0 or 2+ candidates on the matched paper(s) -- don't guess
