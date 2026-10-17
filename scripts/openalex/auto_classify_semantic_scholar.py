@@ -54,10 +54,14 @@ def search_semantic_scholar_author(pi_name: str, rgc_institution: str) -> list[d
         "fields": "name,affiliations,paperCount",
     })
     candidates = data.get("data", []) or []
-    target = normalize_institution(rgc_institution)
+    target = normalize_institution(rgc_institution).lower()
+    # Semantic Scholar affiliations are often compound strings (e.g. "Department of
+    # Electrical Engineering, City University of Hong Kong"), not just the bare
+    # university name -- an exact-equality check against the normalized RGC
+    # institution would almost never match, so this checks containment instead.
     matches = [
         a for a in candidates
-        if any(normalize_institution(aff) == target for aff in (a.get("affiliations") or []))
+        if any(target in normalize_institution(aff).lower() for aff in (a.get("affiliations") or []))
     ]
     return matches
 
