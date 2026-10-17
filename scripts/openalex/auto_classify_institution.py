@@ -1,15 +1,23 @@
 """
 Stage 1 of the automated (no manual review) PI matching pipeline, per
 supervisor instruction to replace one-by-one manual checking with a
-filtering system. Starts with institution matching as the first, strongest
-automatic filter.
+filtering system. The rule is name + institution + unique candidate, per
+supervisor's framing -- confirmed this way to validate accuracy before
+applying it to the full dataset.
+
+An earlier version of this script only checked institution_match, without
+also requiring an exact name-token match -- so a candidate whose name was
+only a loose/fuzzy match to the search query, but happened to be the only
+one at the right institution, could have been auto-confirmed. Fixed: now
+requires BOTH institution match AND an exact name-token match (same set of
+words, order-independent) before counting a candidate at all.
 
 Rule per PI (grouped by pi_name_raw + rgc_institution):
-  - exactly 1 candidate has institution_match=1            -> auto "confirmed"
-  - 0 candidates have institution_match=1                  -> auto "not_found"
-  - 2+ candidates have institution_match=1                 -> "needs_stage2"
-    (institution alone can't resolve it -- goes to the next filter stage,
-    e.g. topic overlap, ORCID, exact name match)
+  - exactly 1 candidate has institution+exact-name match   -> auto "confirmed"
+  - 0 candidates have institution+exact-name match          -> auto "not_found"
+  - 2+ candidates have institution+exact-name match          -> "needs_stage2"
+    (name+institution alone can't resolve it -- goes to the next filter
+    stage, e.g. ORCID)
 
 This does NOT check affiliation timing (whether the candidate was at that
 institution during the award year specifically) -- it only checks whether
@@ -25,40 +33,50 @@ Usage:
 """
 import argparse
 import csv
+import re
 from collections import defaultdict
 
 
-def classify_pi(rows: list[dict]) -> dict:
-    institution_matched = [r for r in rows if r.get("institution_match") == "1"]
+def name_tokens(name: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]+", (name or "").lower()))
 
-    if len(institution_matched) == 1:
-        candidate = institution_matched[0]
+
+def classify_pi(rows: list[dict]) -> dict:
+    pi_tokens = name_tokens(rows[0].get("pi_name_clean", ""))
+    matched = [
+        r for r in rows
+        if r.get("institution_match") == "1"
+        and name_tokens(r.get("candidate_display_name", "")) == pi_tokens
+    ]
+
+    if len(matched) == 1:
+        candidate = matched[0]
         return {
             "decision": "confirmed",
             "stage": "institution",
-            "candidate_author_id": candidate["candidate_author_id"],
-            "candidate_display_name": candidate["candidate_display_name"],
-            "candidate_orcid": candidate.get("candidate_orcid", ""),
-            "reason": "Single candidate matched the RGC institution",
+            "openalex_author_ids": candidate["candidate_author_id"],
+            "openalex_display_names": candidate["candidate_display_name"],
+            "openalex_orcid": candidate.get("candidate_orcid", ""),
+            "reason": "Single candidate matched both the RGC institution and an exact name-token match",
         }
 
-    if len(institution_matched) == 0:
+    if len(matched) == 0:
         return {
             "decision": "not_found",
             "stage": "institution",
-            "candidate_author_id": "",
-            "candidate_display_name": "",
-            "candidate_orcid": "",
-            "reason": "No candidate matched the RGC institution",
+            "openalex_author_ids": "",
+            "openalex_display_names": "",
+            "openalex_orcid": "",
+            "reason": "No candidate matched both the RGC institution and an exact name-token match",
         }
 
     return {
         "decision": "needs_stage2",
         "stage": "institution",
-        "candidate_author_id": "",
-        "candidate_display_name": "",
-        "candidate_orcid": "",
-        "reason": f"{len(institution_matched)} candidates matched the RGC institution -- institution alone can't resolve this",
+        "openalex_author_ids": "",
+        "openalex_display_names": "",
+        "openalex_orcid": "",
+        "reason": f"{len(matched)} candidates matched both institution and exact name -- can't resolve at this stage",
     }
 
 
@@ -95,7 +113,7 @@ def main():
                 stage2_rows.append(pi_row)
 
     crosswalk_fields = ["pi_name_raw", "rgc_institution", "rgc_project_ids", "decision", "stage",
-                         "candidate_author_id", "candidate_display_name", "candidate_orcid", "reason"]
+                         "openalex_author_ids", "openalex_display_names", "openalex_orcid", "reason"]
     with open(args.out_crosswalk, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=crosswalk_fields)
         writer.writeheader()

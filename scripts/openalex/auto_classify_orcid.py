@@ -9,7 +9,19 @@ person's output that didn't get merged) usually don't -- confirmed directly
 in the CAI Wenlong pilot case, where the main 54-work profile had an ORCID
 and the two small stub profiles (2-9 works) did not.
 
-Rule per PI, among their stage-1 institution-matched candidates only:
+Per supervisor feedback: having an ORCID does not by itself mean a
+candidate is the correct match -- ORCID is supporting evidence, not a
+standalone decision. An earlier version of this script only required
+institution_match before using ORCID, WITHOUT requiring the candidate's
+name to be an exact match to the PI's name -- so a candidate with only a
+loose/fuzzy name match, the right institution, and an ORCID could have been
+auto-confirmed over the real person. Fixed: ORCID now only breaks a tie
+among candidates that already have an EXACT name-token match (same
+requirement as stage 3), so ORCID is always combined with name+institution
+evidence, never used alone.
+
+Rule per PI, among their institution-matched, exact-name-matched
+candidates only:
   - exactly 1 candidate has a non-empty ORCID   -> auto "confirmed"
   - 0 or 2+ candidates have an ORCID            -> still unresolved, needs stage 3
 
@@ -20,22 +32,35 @@ Usage:
 """
 import argparse
 import csv
+import re
 from collections import defaultdict
 
 
+def name_tokens(name: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]+", (name or "").lower()))
+
+
 def classify_pi(rows: list[dict]) -> dict | None:
-    institution_matched = [r for r in rows if r.get("institution_match") == "1"]
-    with_orcid = [r for r in institution_matched if (r.get("candidate_orcid") or "").strip()]
+    pi_tokens = name_tokens(rows[0].get("pi_name_clean", ""))
+    if not pi_tokens:
+        return None
+
+    exact_matches = [
+        r for r in rows
+        if r.get("institution_match") == "1"
+        and name_tokens(r.get("candidate_display_name", "")) == pi_tokens
+    ]
+    with_orcid = [r for r in exact_matches if (r.get("candidate_orcid") or "").strip()]
 
     if len(with_orcid) == 1:
         candidate = with_orcid[0]
         return {
             "decision": "confirmed",
             "stage": "orcid",
-            "candidate_author_id": candidate["candidate_author_id"],
-            "candidate_display_name": candidate["candidate_display_name"],
-            "candidate_orcid": candidate.get("candidate_orcid", ""),
-            "reason": f"Institution-matched; only this candidate (of {len(institution_matched)}) has an ORCID",
+            "openalex_author_ids": candidate["candidate_author_id"],
+            "openalex_display_names": candidate["candidate_display_name"],
+            "openalex_orcid": candidate.get("candidate_orcid", ""),
+            "reason": f"Institution+exact-name-matched; only this candidate (of {len(exact_matches)}) has an ORCID",
         }
 
     return None
@@ -69,7 +94,7 @@ def main():
             stage3_rows.extend(pi_rows)
 
     crosswalk_fields = ["pi_name_raw", "rgc_institution", "rgc_project_ids", "decision", "stage",
-                         "candidate_author_id", "candidate_display_name", "candidate_orcid", "reason"]
+                         "openalex_author_ids", "openalex_display_names", "openalex_orcid", "reason"]
     with open(args.out_crosswalk, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=crosswalk_fields)
         writer.writeheader()

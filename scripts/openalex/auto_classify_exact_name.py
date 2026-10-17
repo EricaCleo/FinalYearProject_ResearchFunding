@@ -32,22 +32,30 @@ information, not proof of a single identity, and is a materially weaker
 of candidates proven identical by a shared ORCID; everything else --
 including "nobody has an ORCID" -- is left unresolved rather than guessed.
 
+Per supervisor feedback: when 2+ candidates share a proven identity (same
+ORCID), don't pick only the highest-works_count one and discard the rest --
+retain ALL of them. They're genuinely the same real person, so their
+publication records will need to be combined later (deduped by OpenAlex
+Work ID) rather than losing whatever the discarded profiles hold. This
+script now outputs every ID in a proven group, not just the "winner."
+
 Rule per PI, among institution-matched candidates with an exact name-token
 match:
-  - exactly 1 exact-name candidate                -> auto "confirmed"
-  - 2+ candidates share one ORCID (proven identity) -> auto-confirm the one
-                                                        with the highest
-                                                        works_count among
-                                                        that proven group,
-                                                        unless tied
-  - no such proven-identity group exists           -> still unresolved
+  - exactly 1 exact-name candidate                 -> auto "confirmed",
+                                                        1 OpenAlex ID
+  - 2+ candidates share one ORCID (proven identity) -> auto "confirmed",
+                                                        ALL IDs in that
+                                                        proven group kept
+                                                        (pipe-separated)
+  - no such proven-identity group exists            -> still unresolved
                                                         (including when no
                                                         candidate has an
                                                         ORCID at all)
-  - 0 exact-name candidates                        -> still unresolved (e.g.
-                                                       the PI's real OpenAlex
-                                                       name is abbreviated to
-                                                       initials)
+  - 0 exact-name candidates                         -> still unresolved (e.g.
+                                                        the PI's real
+                                                        OpenAlex name is
+                                                        abbreviated to
+                                                        initials)
 
 Usage:
     python auto_classify_exact_name.py --input needs_stage3_filtering.csv \
@@ -78,43 +86,39 @@ def classify_pi(rows: list[dict]) -> dict | None:
         return None
 
     if len(exact_matches) == 1:
-        candidate = exact_matches[0]
+        group = exact_matches
         reason = "Exact name-token match (institution-matched), only one such candidate"
     else:
-        # works_count only tells you who's more PROLIFIC, not who's CORRECT --
-        # it's only valid evidence if the tied candidates are PROVEN
-        # fragments of the same real person. The only positive proof of that
-        # is 2+ candidates sharing the literal SAME non-empty ORCID (ORCID is
-        # self-registered per human, so identical ORCID = same human,
-        # guaranteed). The absence of a conflict is NOT the same as proof:
-        # if nobody has an ORCID, or only one candidate happens to have one,
-        # that's simply missing information, not evidence they're one
-        # person -- treating it as "safe" was the earlier bug here. Only
-        # resolve among the candidates that share a duplicated ORCID.
+        # A group is only resolvable with PROOF the tied candidates are the
+        # same real person, not a guess. The only positive proof available
+        # is 2+ candidates sharing the literal SAME non-empty ORCID (ORCID
+        # is self-registered per human, so identical ORCID = same human,
+        # guaranteed). Absence of a conflict is NOT the same as proof: if
+        # nobody has an ORCID, or only one candidate happens to have one,
+        # that's missing information, not evidence of one person -- treating
+        # it as "safe" was an earlier bug here. Only resolve a group that
+        # shares a duplicated ORCID, and keep every member of that group
+        # (not just the one with the most works) since they're all genuinely
+        # the same person and their publication records will be combined
+        # downstream.
         orcid_counts = defaultdict(list)
         for r in exact_matches:
             orcid = r.get("candidate_orcid")
             if orcid:
                 orcid_counts[orcid].append(r)
-        duplicated = [group for group in orcid_counts.values() if len(group) > 1]
+        duplicated = [g for g in orcid_counts.values() if len(g) > 1]
         if len(duplicated) != 1:
             return None  # no proven single identity among the tied candidates
 
-        proven_group = duplicated[0]
-        works_counts = [int(r.get("works_count") or 0) for r in proven_group]
-        best = max(works_counts)
-        if works_counts.count(best) > 1:
-            return None  # tie even within the proven-same-identity group
-        candidate = proven_group[works_counts.index(best)]
-        reason = (f"Exact name-token match, {len(proven_group)} candidates share the same ORCID "
-                  f"(proven single identity), highest works_count among them ({best})")
+        group = duplicated[0]
+        reason = f"Exact name-token match, {len(group)} candidates share the same ORCID (proven single identity) -- all retained"
 
     return {
         "decision": "confirmed",
         "stage": "exact_name",
-        "candidate_author_id": candidate["candidate_author_id"],
-        "candidate_display_name": candidate["candidate_display_name"],
-        "candidate_orcid": candidate.get("candidate_orcid", ""),
+        "openalex_author_ids": "|".join(r["candidate_author_id"] for r in group),
+        "openalex_display_names": "|".join(r["candidate_display_name"] for r in group),
+        "openalex_orcid": group[0].get("candidate_orcid", ""),
         "reason": reason,
     }
 
@@ -147,7 +151,7 @@ def main():
             unresolved_rows.extend(pi_rows)
 
     crosswalk_fields = ["pi_name_raw", "rgc_institution", "rgc_project_ids", "decision", "stage",
-                         "candidate_author_id", "candidate_display_name", "candidate_orcid", "reason"]
+                         "openalex_author_ids", "openalex_display_names", "openalex_orcid", "reason"]
     with open(args.out_crosswalk, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=crosswalk_fields)
         writer.writeheader()
