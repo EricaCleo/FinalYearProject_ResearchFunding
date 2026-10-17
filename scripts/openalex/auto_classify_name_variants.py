@@ -71,18 +71,44 @@ def classify_pi(rows: list[dict]) -> dict | None:
         if kind:
             matches.append((r, kind))
 
-    if len(matches) != 1:
-        return None  # 0 -> still no match; 2+ -> ambiguous, don't guess
+    if len(matches) == 1:
+        candidate, kind = matches[0]
+        return {
+            "decision": "confirmed",
+            "stage": "name_variant",
+            "openalex_author_ids": candidate["candidate_author_id"],
+            "openalex_display_names": candidate["candidate_display_name"],
+            "openalex_orcid": candidate.get("candidate_orcid", ""),
+            "reason": f"Institution-matched, name matched via {kind} comparison (not exact token match), only one such candidate",
+        }
 
-    candidate, kind = matches[0]
-    return {
-        "decision": "confirmed",
-        "stage": "name_variant",
-        "openalex_author_ids": candidate["candidate_author_id"],
-        "openalex_display_names": candidate["candidate_display_name"],
-        "openalex_orcid": candidate.get("candidate_orcid", ""),
-        "reason": f"Institution-matched, name matched via {kind} comparison (not exact token match), only one such candidate",
-    }
+    if len(matches) > 1:
+        # Same logic as stage 3: several name-variant matches can't be
+        # resolved by guessing, but if 2+ of them share the literal same
+        # ORCID, that's proof they're the same real person split across
+        # OpenAlex profiles -- retain all of them rather than leave a
+        # provably-resolvable case unresolved (found via "S.Y.R. Hui" and
+        # "S.Y. Ron Hui" both matching "Ron Shu-Yuen Hui" by initials, and
+        # sharing one ORCID between them).
+        orcid_counts = defaultdict(list)
+        for r, _ in matches:
+            orcid = r.get("candidate_orcid")
+            if orcid:
+                orcid_counts[orcid].append(r)
+        duplicated = [g for g in orcid_counts.values() if len(g) > 1]
+        if len(duplicated) == 1:
+            group = duplicated[0]
+            return {
+                "decision": "confirmed",
+                "stage": "name_variant",
+                "openalex_author_ids": "|".join(r["candidate_author_id"] for r in group),
+                "openalex_display_names": "|".join(r["candidate_display_name"] for r in group),
+                "openalex_orcid": group[0].get("candidate_orcid", ""),
+                "reason": (f"Institution-matched, {len(matches)} candidates matched by name variant, "
+                           f"{len(group)} of them share the same ORCID (proven single identity) -- all retained"),
+            }
+
+    return None  # 0 matches, or 2+ with no provable shared identity -- don't guess
 
 
 def main():
