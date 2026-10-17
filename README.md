@@ -133,38 +133,91 @@ count by institution (Fig B), and mean/median grant size trend by year (Fig C).
 ## Phase 2: matching RGC PIs to OpenAlex authors
 
 RGC gives a PI's name on paper; to measure what they actually published, we need their
-real OpenAlex author profile. Since many people share a name, this is NOT automatic — the
-guide this is built from (`RGC_to_OpenAlex_Author_Linkage_Guide.md`) requires a human to
-review and classify every match. All scripts live in `scripts/openalex/`.
+real OpenAlex author profile. Since many people share a name, this can't be done by name
+alone — the pipeline below (built from `RGC_to_OpenAlex_Author_Linkage_Guide.md` plus
+lessons from manual pilot review) runs a sequence of automated, no-manual-decision
+filter stages, each stricter than the last, and only leaves a PI unresolved when none of
+them can prove a single identity. All scripts live in `scripts/openalex/`.
 
-1. **Combine** (`combine_rgc_data.py`) — merges all per-year RGC CSVs into one
+Candidate **generation** (search by name) and candidate **classification** (deciding
+which one is correct) are different problems — for very common names, the right
+candidate can be entirely absent from the top search results, which no downstream
+classification logic can fix. That's a known, open gap; see "Known limitations" below.
+
+0. **Combine** (`combine_rgc_data.py`) — merges all per-year RGC CSVs into one
    `rgc_awards.csv`, deduped by `project_id`, with `award_year` taken from the filename
-   (not the unreliable "Exercise Year" field — see script docstring).
-2. **Search candidates** (`search_candidates.py`) — for each unique PI, searches OpenAlex
+   (not the unreliable "Exercise Year" field — see script docstring). Also carries
+   RGC's own `co_investigators` and `publications` fields through, used by stages 5–6.
+1. **Search candidates** (`search_candidates.py`) — for each unique PI, searches OpenAlex
    by name variants and gathers evidence (name similarity, institution match, topics,
    ORCID, works/citation counts) for every candidate author found. This does NOT decide
-   who's correct — it only collects evidence. Outputs `author_candidates_pilot.csv` and
-   `author_candidates_for_review.csv` (same data plus empty columns for your decisions).
-3. **Triage** (`triage_candidates.py`) — optional helper that groups the review CSV by PI
-   and flags each as `likely_confirmed` (one clear institution-matched candidate) or
-   `needs_review` (multiple candidates share the institution — these need the full manual
-   check), so review time goes to the ambiguous PIs first.
-4. **Manual review** — for each PI, open the flagged candidate(s) on openalex.org, check
-   institution/ORCID/actual paper topics against the grant, and fill in
-   `reviewer_decision` (confirmed/probable/ambiguous/not_found) in
-   `author_candidates_for_review.csv`. This step cannot be automated — see the guide.
-5. **(Next, not yet built)** — for confirmed matches, download each author's full works
-   list and citation counts from OpenAlex, then join against `rgc_awards.csv` by PI to
-   analyze funding size vs. research output.
+   who's correct — it only collects evidence. Outputs `author_candidates_pilot.csv`.
+2. **Stage 1 — institution + exact name** (`auto_classify_institution.py`) — confirms a
+   PI when exactly one candidate matches BOTH the RGC institution and an exact
+   name-token match. Also writes full candidate rows for PIs with 0 matches
+   (`--out-no-exact-match`) so stage 4 can still use them.
+3. **Stage 2 — ORCID among exact-name matches** (`auto_classify_orcid.py`) — for PIs
+   still tied after stage 1, confirms when exactly one of the institution+exact-name
+   candidates carries a non-empty ORCID.
+4. **Stage 3 — proven ORCID duplicates** (`auto_classify_exact_name.py`) — for PIs still
+   tied, confirms (retaining ALL of them — needed later to dedupe combined publication
+   records) when 2+ tied candidates share the literal same ORCID, which is proof they're
+   the same real person split across OpenAlex profiles. Does NOT use works_count as a
+   tie-breaker — "no ORCID conflict" is not proof of identity.
+5. **Stage 4 — name-formatting variants** (`auto_classify_name_variants.py`) — handles
+   two gaps exact-token matching correctly declines to guess: initials vs. spelled-out
+   given names (e.g. "S.Y.R. Hui" vs "Ron Shu-Yuen Hui"), and compound given-name
+   splitting (e.g. "Wenxiong" vs "Wen-Xiong"). Same proven-ORCID-duplicate handling as
+   stage 3 for ties.
+6. **Stage 5 — publication-title match** (`auto_classify_publication_match.py`) —
+   for PIs still tied, searches OpenAlex for the actual grant-resulting paper (from
+   RGC's own scraped `publications` field) by exact normalized title, and reads the
+   correct author ID straight off that paper's real authorship list. Needs
+   `rgc_awards.csv` (`--rgc-awards`).
+7. **Stage 6 — co-investigator cross-check** (`auto_classify_coinvestigator.py`) — for
+   PIs still tied, cross-references RGC's own `co_investigators` field against each
+   tied candidate's real OpenAlex co-authors; confirms only when exactly one candidate
+   overlaps. Needs `rgc_awards.csv` (`--rgc-awards`).
+8. **Stage 7 — Semantic Scholar field-check** (`auto_classify_semantic_scholar.py`) — an
+   automatable equivalent of manually checking a PI's Google Scholar page (which has no
+   API and blocks bulk access). Looks up the PI on Semantic Scholar using their own
+   `rgc_institution` (dynamic per PI — RGC PIs span all 8 UGC-funded universities, not
+   just one), and checks whether a tied candidate's OpenAlex topics share enough
+   specific keywords with the PI's real paper titles to arbitrate between them.
+9. **Still unresolved after stage 7** — true manual review, same as the pilot: open the
+   candidate(s) on openalex.org and check institution/ORCID/paper topics by hand.
+10. **(Next, not yet built)** — for confirmed matches, download each author's full works
+    list and citation counts from OpenAlex, then join against `rgc_awards.csv` by PI to
+    analyze funding size vs. research output.
 
 ```
 python combine_rgc_data.py --input-dir path/to/per-year/csvs --out rgc_awards.csv
 python search_candidates.py --input unique_pis.csv --pilot-size 40
-python triage_candidates.py --input author_candidates_for_review.csv --out triage_summary.csv
+python auto_classify_institution.py --input author_candidates_pilot.csv
+python auto_classify_orcid.py --input needs_stage2_filtering.csv
+python auto_classify_exact_name.py --input still_needs_stage3.csv   # see each script's own --help for its exact in/out flags
+python auto_classify_name_variants.py --input no_exact_match_candidates.csv --input still_unresolved.csv
+python auto_classify_publication_match.py --input truly_unresolved.csv --rgc-awards rgc_awards.csv
+python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv --rgc-awards rgc_awards.csv
+python auto_classify_semantic_scholar.py --input still_unresolved_stage6.csv
 ```
 
 OpenAlex needs no account for normal use. Optionally set `OPENALEX_MAILTO` (your email)
 for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor provides one.
+Stage 7 additionally calls the free Semantic Scholar API (no account needed either).
+
+### Known limitations
+
+- **Candidate generation gap**: for extremely common names, the correct OpenAlex
+  profile can be missing from `search_candidates.py`'s results entirely (a
+  merged/garbage profile with an inflated works_count can outrank it). None of the
+  stages above can resolve this — it needs either a direct ORCID lookup from the PI's
+  own institutional page, or a direct paper-title search, done by hand.
+- Stages 5–7 assume `rgc_project_ids` is pipe-separated (`|`), this project's existing
+  convention for multi-value fields (comma is accepted as a fallback).
+- `triage_candidates.py` (grouping the review CSV into `likely_confirmed`/`needs_review`)
+  predates the staged pipeline above and is kept for ad hoc manual spot-checks, not as a
+  pipeline step.
 
 ## Next steps
 
