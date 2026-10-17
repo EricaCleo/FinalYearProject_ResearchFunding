@@ -17,6 +17,9 @@ independent source, not a place to loosen matching rules.
 Requires a copy of rgc_awards.csv (output of combine_rgc_data.py) to look up
 each PI's co_investigators by project_id -- that field is RGC's own
 free-text list of co-investigator names (not sourced from OpenAlex at all).
+Confirmed from real scraped data that entries are concatenated as
+"<Title> Surname, Given" with no delimiter between people other than the
+next title keyword (see extract_coinvestigator_names below).
 
 Usage:
     python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv \
@@ -29,7 +32,21 @@ import csv
 import re
 from collections import defaultdict
 
-from common import openalex_get
+from common import clean_person_name, openalex_get
+
+# A new co-investigator entry starts at each title keyword (Prof/Dr/Mr/...).
+# Confirmed from real scraped RGC data that co_investigators concatenates
+# "<Title> Surname, Given" entries with just a space and NO comma, semicolon,
+# or "and" between people at all, e.g.:
+#   "Prof Kwan, Kin Ming Prof Tin, Chung"
+#   "Prof LEUNG, Kwok Hi, Michael Prof SUN, Yongjun"
+#   "Dr CHONG, Alice Prof COOPER, Cary Prof OLOMOLAIYE, Paul"
+# Comma can't be the inter-person delimiter since it's already used WITHIN each
+# name for "Surname, Given" (and sometimes "Surname, Given1, Given2").
+TITLE_SPLIT_PATTERN = re.compile(
+    r"(?=\b(?:professor|prof|doctor|dr|mr|mrs|ms|miss)\.?\s)",
+    flags=re.IGNORECASE,
+)
 
 
 def split_ids(value: str) -> list[str]:
@@ -45,13 +62,18 @@ def name_tokens(name: str) -> frozenset[str]:
 
 
 def extract_coinvestigator_names(co_investigators_raw: str) -> list[str]:
-    """RGC's co_investigators field is free text, e.g. "CHAN, Tai Man; WONG, Siu Ming"
-    or "Tai Man Chan and Siu Ming Wong" -- split on the delimiters actually seen in
-    practice (semicolon, comma, newline, or the word "and") rather than assuming one
-    fixed format."""
-    raw = co_investigators_raw or ""
-    parts = re.split(r";|\n|\band\b", raw)
-    return [p.strip(" ,.;") for p in parts if p.strip(" ,.;")]
+    raw = (co_investigators_raw or "").strip()
+    if not raw:
+        return []
+
+    parts = TITLE_SPLIT_PATTERN.split(raw)
+    if len(parts) > 1:
+        return [clean_person_name(p) for p in parts if p.strip()]
+
+    # No title keyword found at all -- fall back to semicolon/newline splitting
+    # in case some other year's scrape used a plain delimited list instead.
+    parts = re.split(r";|\n", raw)
+    return [clean_person_name(p) for p in parts if p.strip()]
 
 
 def fetch_coauthor_names(author_id: str, max_works: int = 50) -> set[str]:
