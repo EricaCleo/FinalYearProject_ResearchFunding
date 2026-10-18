@@ -52,11 +52,10 @@ Usage:
 """
 import argparse
 import csv
-import json
 import re
 from collections import defaultdict
 
-from common import normalize_institution, openalex_get, short_openalex_id
+from common import extract_titles, normalize_institution, openalex_get, short_openalex_id
 
 
 def split_ids(value: str) -> list[str]:
@@ -87,26 +86,6 @@ def titles_match(openalex_title: str, rgc_citation: str) -> bool:
     if len(openalex_norm) < 15:
         return False
     return normalize_title(rgc_citation).startswith(openalex_norm)
-
-
-def extract_titles(publications_raw: str) -> list[str]:
-    if not publications_raw:
-        return []
-    try:
-        entries = json.loads(publications_raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not isinstance(entries, list):
-        return []
-    titles = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        for key, value in entry.items():
-            if "title" in key.lower() and value:
-                titles.append(value.strip())
-                break
-    return titles
 
 
 def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:

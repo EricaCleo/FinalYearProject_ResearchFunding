@@ -8,6 +8,7 @@ more reliable responses ("the polite pool") to requests that identify a contact.
 your supervisor later provides an actual API key, set OPENALEX_API_KEY and it will be
 used automatically; it's optional, everything here works without one.
 """
+import json
 import os
 import re
 import time
@@ -105,6 +106,31 @@ def short_openalex_id(value) -> str:
     if not value:
         return ""
     return str(value).rstrip("/").split("/")[-1]
+
+
+def extract_titles(publications_raw: str) -> list[str]:
+    """RGC's `publications` field (rgc_awards.csv, from parse_details.py's completion-
+    report Research Output table) is a JSON-encoded list of {column_header: value}
+    dicts -- reads any key containing "title" rather than assuming one exact column
+    name, since the real header is usually "Title and Journal/Book" (a combined
+    citation string, not a pure title -- see auto_classify_publication_match.py)."""
+    if not publications_raw:
+        return []
+    try:
+        entries = json.loads(publications_raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    titles = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for key, value in entry.items():
+            if "title" in key.lower() and value:
+                titles.append(value.strip())
+                break
+    return titles
 
 
 def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5):

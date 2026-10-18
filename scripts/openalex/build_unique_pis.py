@@ -28,7 +28,7 @@ import argparse
 import csv
 from collections import defaultdict
 
-from common import clean_person_name, normalize_institution
+from common import clean_person_name, extract_titles, normalize_institution
 
 
 def main():
@@ -57,6 +57,16 @@ def main():
         award_years = sorted({r.get("award_year", "") for r in group_rows if r.get("award_year")})
         sample_title = next((r.get("project_title", "") for r in group_rows if r.get("project_title")), "")
 
+        # Real published paper titles (if any), pulled from RGC's own completion-report
+        # data across ALL of this PI's grants -- NOT the same as sample_project_title,
+        # which is just the grant's own proposed title (see auto_classify_publication_
+        # match.py's docstring for why those two are different strings in practice).
+        # Carried through here so a human reviewer can cross-check a candidate directly
+        # against OpenAlex without having to dig into rgc_awards.csv separately.
+        known_titles = []
+        for r in group_rows:
+            known_titles.extend(extract_titles(r.get("publications", "")))
+
         out_rows.append({
             "pi_name_raw": pi_name_raw,
             "institution_raw": institution_raw,
@@ -64,17 +74,22 @@ def main():
             "award_years": "|".join(award_years),
             "project_ids": "|".join(project_ids),
             "sample_project_title": sample_title,
+            "known_publication_titles": "|".join(known_titles),
         })
 
-    fieldnames = ["pi_name_raw", "institution_raw", "n_awards", "award_years", "project_ids", "sample_project_title"]
+    fieldnames = ["pi_name_raw", "institution_raw", "n_awards", "award_years", "project_ids",
+                  "sample_project_title", "known_publication_titles"]
     with open(args.out, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(out_rows)
 
     n_multi_award = sum(1 for r in out_rows if r["n_awards"] > 1)
+    n_with_titles = sum(1 for r in out_rows if r["known_publication_titles"])
     print(f"{len(rows)} grant rows -> {len(out_rows)} unique PIs -> {args.out}")
     print(f"  {n_multi_award} PIs have more than one RGC award (their project_ids are combined)")
+    print(f"  {n_with_titles} PIs have at least one known real publication title "
+          f"(only completed grants with a submitted completion report carry this)")
 
 
 if __name__ == "__main__":

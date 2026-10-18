@@ -87,6 +87,7 @@ def candidate_summary(pi_row: dict, candidate_record: dict) -> dict:
         "rgc_award_years": pi_row.get("award_years", ""),
         "rgc_project_ids": pi_row.get("project_ids", ""),
         "sample_project_title": pi_row.get("sample_project_title", ""),
+        "known_publication_titles": pi_row.get("known_publication_titles", ""),
         "candidate_author_id": short_openalex_id(author.get("id")),
         "candidate_display_name": author.get("display_name"),
         "candidate_orcid": author.get("orcid"),
