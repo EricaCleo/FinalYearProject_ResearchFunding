@@ -89,15 +89,21 @@ def titles_match(openalex_title: str, rgc_citation: str) -> bool:
 
 
 def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
-    """OpenAlex's filter syntax uses a bare comma to separate multiple filters within
-    one filter string -- a literal comma inside the title text (very common in real
-    paper titles, e.g. "Title: A Study of X, Y, and Z") breaks the whole request with
-    an HTTP 400 unless the value is quoted. Found live running this against real RGC
-    publication data. Wrapping the title in double quotes (OpenAlex's own documented
-    escape mechanism) fixes it; any literal double quote inside the title itself is
-    escaped so it can't prematurely close that wrapping quote."""
-    escaped_title = title.replace('"', '\\"')
-    data = openalex_get("works", params={"filter": f'title.search:"{escaped_title}"', "per_page": max_results})
+    """OpenAlex's filter syntax (filter=title.search:...) uses a bare comma to
+    separate multiple filters within one filter string -- a literal comma inside the
+    title text (very common in real paper titles, e.g. "Title: A Study of X, Y, and
+    Z") breaks the request with an HTTP 400. Found live running this against real RGC
+    publication data; quoting the value (OpenAlex's own documented escape mechanism)
+    did NOT fix it in practice -- the edge proxy appears to split on commas before
+    any quote-aware parsing. Sidesteps the whole escaping problem by using OpenAlex's
+    plain top-level `search` parameter instead of the filter mini-language: it isn't
+    comma-delimited at all, so normal URL-encoding (which requests already does
+    correctly) just works. This searches title+abstract+fulltext rather than title
+    only, a broader net than before, but that's safe here -- classify_pi's own
+    titles_match() still verifies the returned work's actual title before accepting
+    it, so a broader initial search can't cause a wrong match, only find the right
+    one that a title-only filter might have required exact escaping to reach."""
+    data = openalex_get("works", params={"search": title, "per_page": max_results})
     return data.get("results", [])
 
 
