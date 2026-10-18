@@ -107,45 +107,6 @@ def short_openalex_id(value) -> str:
     return str(value).rstrip("/").split("/")[-1]
 
 
-SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
-
-
-def semantic_scholar_get(endpoint: str, params: dict | None = None, max_retries: int = 5):
-    """Semantic Scholar's API is free, requires no account, but is more aggressively
-    rate-limited than OpenAlex (expect 429s on sustained use) -- the retry/backoff here
-    matters more than it does for openalex_get. Used as an automatable equivalent to
-    manually checking a PI's Google Scholar page: both give a quick read on someone's
-    real research field and paper list, but Google Scholar has no API and blocks bulk
-    access, so this is the one that's actually safe to call programmatically."""
-    url = f"{SEMANTIC_SCHOLAR_BASE_URL}/{endpoint.lstrip('/')}"
-
-    last_detail = "unknown error"
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, params=params or {}, timeout=60)
-        except requests.RequestException as exc:
-            last_detail = f"network error ({exc})"
-            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
-            time.sleep(min(2 ** attempt, 30))
-            continue
-
-        if response.status_code == 429:
-            last_detail = "HTTP 429 rate limited"
-            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
-            time.sleep(min(2 ** attempt, 30) + 2)  # Semantic Scholar wants more breathing room
-            continue
-
-        if not response.ok:
-            last_detail = f"HTTP {response.status_code}: {response.text[:300]}"
-            print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
-            time.sleep(min(2 ** attempt, 30))
-            continue
-
-        return response.json()
-
-    raise RuntimeError(f"Semantic Scholar request failed after {max_retries} attempts: {url} ({last_detail})")
-
-
 def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5):
     params = dict(params or {})
     if API_KEY:

@@ -178,12 +178,19 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    PIs still tied, cross-references RGC's own `co_investigators` field against each
    tied candidate's real OpenAlex co-authors; confirms only when exactly one candidate
    overlaps. Needs `rgc_awards.csv` (`--rgc-awards`).
-8. **Stage 7 — Semantic Scholar field-check** (`auto_classify_semantic_scholar.py`) — an
-   automatable equivalent of manually checking a PI's Google Scholar page (which has no
-   API and blocks bulk access). Looks up the PI on Semantic Scholar using their own
-   `rgc_institution` (dynamic per PI — RGC PIs span all 8 UGC-funded universities, not
-   just one), and checks whether a tied candidate's OpenAlex topics share enough
-   specific keywords with the PI's real paper titles to arbitrate between them.
+8. **Stage 7 — RGC field/panel check** (`auto_classify_field_panel.py`) — for PIs still
+   tied, compares RGC's OWN scraped `field`/`panel` columns against each tied
+   candidate's OpenAlex topics; confirms only when exactly one candidate shares a
+   specific (non-generic) keyword with RGC's recorded subject area. Needs
+   `rgc_awards.csv` (`--rgc-awards`). An earlier version of this stage used Semantic
+   Scholar (an automatable equivalent of manually checking Google Scholar) instead,
+   but that compared two non-RGC sources against each other, which breaks this
+   project's own rule that filtering stay grounded in RGC's own data — fixed by using
+   `field`/`panel` as the actual ground truth instead. Known to have fairly low yield
+   in practice: RGC's categories are broad discipline names while OpenAlex's topics
+   are narrow research niches, so exact-word overlap between them is rare — it stays
+   safe (declines rather than guesses on ambiguous/absent overlap) but won't resolve
+   most remaining ties by itself.
 9. **Still unresolved after stage 7** — true manual review, same as the pilot: open the
    candidate(s) on openalex.org and check institution/ORCID/paper topics by hand.
 10. **(Next, not yet built)** — for confirmed matches, download each author's full works
@@ -199,12 +206,11 @@ python auto_classify_exact_name.py --input still_needs_stage3.csv   # see each s
 python auto_classify_name_variants.py --input no_exact_match_candidates.csv --input still_unresolved.csv
 python auto_classify_publication_match.py --input truly_unresolved.csv --rgc-awards rgc_awards.csv
 python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv --rgc-awards rgc_awards.csv
-python auto_classify_semantic_scholar.py --input still_unresolved_stage6.csv
+python auto_classify_field_panel.py --input still_unresolved_stage6.csv --rgc-awards rgc_awards.csv
 ```
 
 OpenAlex needs no account for normal use. Optionally set `OPENALEX_MAILTO` (your email)
 for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor provides one.
-Stage 7 additionally calls the free Semantic Scholar API (no account needed either).
 
 ### Known limitations
 
