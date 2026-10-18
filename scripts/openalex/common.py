@@ -157,13 +157,22 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
     if MAILTO:
         params["mailto"] = MAILTO
 
+    # OpenAlex's own docs ask for a descriptive User-Agent alongside mailto, and some
+    # requests with no User-Agent at all (the plain "python-requests/x.y" default) get
+    # flagged and blocked before request volume is even a factor -- seen in practice as
+    # a persistent 429 on literally the first request of a run, not a burst pattern.
+    headers = {
+        "User-Agent": f"RGC-OpenAlex-linkage-pipeline (mailto:{MAILTO})" if MAILTO
+        else "RGC-OpenAlex-linkage-pipeline (no contact email set -- see OPENALEX_MAILTO in common.py)"
+    }
+
     url = f"{BASE_URL}/{endpoint.lstrip('/')}"
 
     last_detail = "unknown error"
     for attempt in range(max_retries):
         _pace_requests()
         try:
-            response = requests.get(url, params=params, timeout=60)
+            response = requests.get(url, params=params, headers=headers, timeout=60)
         except requests.RequestException as exc:
             last_detail = f"network error ({exc})"
             print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
