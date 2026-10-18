@@ -133,6 +133,23 @@ def extract_titles(publications_raw: str) -> list[str]:
     return titles
 
 
+_MIN_SECONDS_BETWEEN_REQUESTS = 0.15  # ~6.5 req/sec, safely under OpenAlex's documented 10/sec cap
+_last_request_time = 0.0
+
+
+def _pace_requests():
+    """Scripts in this pipeline (search_candidates.py especially) fire several
+    OpenAlex requests back-to-back per PI with no delay between them -- bursts can
+    trip OpenAlex's rate limiter even while comfortably under its per-day cap, since
+    the limit is also enforced per-second. This keeps every call to openalex_get at
+    least _MIN_SECONDS_BETWEEN_REQUESTS apart, regardless of which script is calling."""
+    global _last_request_time
+    elapsed = time.monotonic() - _last_request_time
+    if elapsed < _MIN_SECONDS_BETWEEN_REQUESTS:
+        time.sleep(_MIN_SECONDS_BETWEEN_REQUESTS - elapsed)
+    _last_request_time = time.monotonic()
+
+
 def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5):
     params = dict(params or {})
     if API_KEY:
@@ -144,6 +161,7 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
 
     last_detail = "unknown error"
     for attempt in range(max_retries):
+        _pace_requests()
         try:
             response = requests.get(url, params=params, timeout=60)
         except requests.RequestException as exc:
