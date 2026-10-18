@@ -102,8 +102,18 @@ def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
     only, a broader net than before, but that's safe here -- classify_pi's own
     titles_match() still verifies the returned work's actual title before accepting
     it, so a broader initial search can't cause a wrong match, only find the right
-    one that a title-only filter might have required exact escaping to reach."""
-    data = openalex_get("works", params={"search": title, "per_page": max_results})
+    one that a title-only filter might have required exact escaping to reach.
+
+    One more real-world wrinkle found live: OpenAlex's `search` param treats a
+    literal "*" or "?" in the query text as wildcard syntax ("Wildcards require
+    exact (no-stem) search"), and real paper titles can genuinely contain either
+    (a trailing "?" on a question-style title is common; RGC's own data also uses
+    "*" as a footnote marker that occasionally leaks into scraped title text).
+    Stripped before searching -- this is only the candidate-retrieval query, not
+    the final decision, so losing those characters here doesn't weaken the actual
+    match verification titles_match() still does against the real returned title."""
+    search_text = title.replace("*", " ").replace("?", " ")
+    data = openalex_get("works", params={"search": search_text, "per_page": max_results})
     return data.get("results", [])
 
 
