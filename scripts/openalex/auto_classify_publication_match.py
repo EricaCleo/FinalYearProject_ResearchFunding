@@ -89,7 +89,15 @@ def titles_match(openalex_title: str, rgc_citation: str) -> bool:
 
 
 def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
-    data = openalex_get("works", params={"filter": f"title.search:{title}", "per_page": max_results})
+    """OpenAlex's filter syntax uses a bare comma to separate multiple filters within
+    one filter string -- a literal comma inside the title text (very common in real
+    paper titles, e.g. "Title: A Study of X, Y, and Z") breaks the whole request with
+    an HTTP 400 unless the value is quoted. Found live running this against real RGC
+    publication data. Wrapping the title in double quotes (OpenAlex's own documented
+    escape mechanism) fixes it; any literal double quote inside the title itself is
+    escaped so it can't prematurely close that wrapping quote."""
+    escaped_title = title.replace('"', '\\"')
+    data = openalex_get("works", params={"filter": f'title.search:"{escaped_title}"', "per_page": max_results})
     return data.get("results", [])
 
 
