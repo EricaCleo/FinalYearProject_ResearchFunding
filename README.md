@@ -148,6 +148,14 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    `rgc_awards.csv`, deduped by `project_id`, with `award_year` taken from the filename
    (not the unreliable "Exercise Year" field — see script docstring). Also carries
    RGC's own `co_investigators` and `publications` fields through, used by stages 5–6.
+0.5. **Build unique PIs** (`build_unique_pis.py`) — `rgc_awards.csv` has one row per GRANT;
+   this collapses it to one row per PERSON, combining every one of their project IDs into
+   one list (grouped by cleaned name + normalized institution, so e.g. "Prof TAN, Siew
+   Chong" and "Dr TAN, Siew Chong" scraped in different years still merge). This matters
+   beyond avoiding repeat searches: Stage 5 checks ALL of a PI's project IDs for a usable
+   publication, so a PI whose current grant is still ongoing (no completion report yet)
+   can still get resolved through an older, completed grant of theirs — but only if this
+   step actually combined their project IDs first. Outputs `unique_pis.csv`.
 1. **Search candidates** (`search_candidates.py`) — for each unique PI, searches OpenAlex
    by name variants and gathers evidence (name similarity, institution match, topics,
    ORCID, works/citation counts) for every candidate author found. This does NOT decide
@@ -199,6 +207,7 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
 
 ```
 python combine_rgc_data.py --input-dir path/to/per-year/csvs --out rgc_awards.csv
+python build_unique_pis.py --input rgc_awards.csv --out unique_pis.csv
 python search_candidates.py --input unique_pis.csv --pilot-size 40
 python auto_classify_institution.py --input author_candidates_pilot.csv
 python auto_classify_orcid.py --input needs_stage2_filtering.csv
