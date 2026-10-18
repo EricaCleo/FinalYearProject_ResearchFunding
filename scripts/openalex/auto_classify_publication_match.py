@@ -5,9 +5,22 @@ stages 1-4 by searching OpenAlex for the actual grant-resulting publication
 author ID straight off that paper's authorship list.
 
 This is the single most reliable manual technique used during pilot review
-(it is what resolved Tan Siew Chong and Wei Wang, whose correct candidates
-were not even in the original search-candidate pool) -- this stage
-automates it instead of leaving it as a one-off manual step.
+-- it is what resolved Tan Siew Chong (whose correct candidate WAS in the
+original pool, just not exact-name-matched) and, in an extended form below,
+Wei Wang and Li Ying (whose correct candidates were NEVER in the original
+search-candidate pool at all -- a candidate-GENERATION failure, not a
+classification one). This stage automates both instead of leaving them as
+one-off manual steps.
+
+A plain intersection against the existing candidate rows (the first check
+below) only rescues cases like Tan Siew Chong's. For cases like Wei Wang's
+and Li Ying's, where no row for the correct author exists to intersect
+against at all, `find_new_author_by_name_and_institution` instead reads the
+matched paper's own authorship list directly for a name+institution match
+and introduces that as a brand-new confirmed ID (stage
+"publication_match_new_candidate") -- never run against an unconflicting
+answer from the first check, so it only fires when there's truly nothing in
+the existing pool to confirm.
 
 Requires a copy of rgc_awards.csv (output of combine_rgc_data.py) to look up
 each PI's publications by project_id. The `publications` column there is a
@@ -43,7 +56,7 @@ import json
 import re
 from collections import defaultdict
 
-from common import openalex_get, short_openalex_id
+from common import normalize_institution, openalex_get, short_openalex_id
 
 
 def split_ids(value: str) -> list[str]:
@@ -110,6 +123,44 @@ def extract_work_author_ids(work: dict) -> set[str]:
     return ids
 
 
+def name_tokens(name: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]+", (name or "").lower()))
+
+
+def find_new_author_by_name_and_institution(work: dict, pi_name_clean: str, rgc_institution: str) -> dict | None:
+    """Rescue path for PIs whose correct OpenAlex author was never in the original
+    search-candidate pool at all (a candidate-GENERATION failure, not a classification
+    one -- see README "Known limitations"). This happened in the pilot for very common
+    names (e.g. Li Ying, Wei Wang): manual resolution found the correct author by
+    searching the grant paper's title directly and reading the author off its real
+    authorship list, same as the rest of this stage, but that author's ID was never a
+    row in the input candidate CSV to begin with. Checks the paper's OWN authorship
+    entries (name exact-token match to the PI, institution as recorded on THAT
+    authorship, not the author's broader profile) rather than assuming a candidate row
+    already exists. Only returns a result when exactly one authorship entry matches
+    both -- same "don't guess" standard as everywhere else in this pipeline."""
+    pi_tokens = name_tokens(pi_name_clean)
+    if not pi_tokens:
+        return None
+    target_institution = normalize_institution(rgc_institution)
+
+    matches = []
+    for authorship in work.get("authorships", []) or []:
+        author = authorship.get("author") or {}
+        if name_tokens(author.get("display_name", "")) != pi_tokens:
+            continue
+        institutions = {
+            normalize_institution(inst.get("display_name", ""))
+            for inst in (authorship.get("institutions") or [])
+        }
+        if target_institution in institutions:
+            matches.append(author)
+
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | None:
     project_ids = split_ids(rows[0].get("rgc_project_ids", ""))
     titles = []
@@ -121,7 +172,11 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
     if not titles:
         return None  # no publication data to check against -- can't verify this way
 
+    pi_name_clean = rows[0].get("pi_name_clean", "")
+    rgc_institution = rows[0].get("rgc_institution", "")
+
     matched_candidate_ids = set()
+    new_author_candidates = {}  # author_id -> author dict, for IDs not already in `rows`
     checked_titles = []
     for title in titles:
         works = search_work_by_title(title)
@@ -132,9 +187,19 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
                 for r in rows:
                     if r.get("candidate_author_id") in author_ids:
                         matched_candidate_ids.add(r["candidate_author_id"])
+
+                # Rescue path: the correct author may never have been in the
+                # original candidate pool at all (a candidate-GENERATION
+                # failure, e.g. an extremely common name) -- check the paper's
+                # own authorship list directly for a name+institution match.
+                new_author = find_new_author_by_name_and_institution(work, pi_name_clean, rgc_institution)
+                if new_author:
+                    new_id = short_openalex_id(new_author.get("id"))
+                    if new_id:
+                        new_author_candidates[new_id] = new_author
                 break  # only the first title-match work counts per title
 
-    if len(matched_candidate_ids) == 1:
+    if len(matched_candidate_ids) == 1 and not (new_author_candidates.keys() - matched_candidate_ids):
         author_id = next(iter(matched_candidate_ids))
         candidate = next(r for r in rows if r["candidate_author_id"] == author_id)
         return {
@@ -147,7 +212,20 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
                        f"publication found via title match ({len(checked_titles)} title(s) checked)"),
         }
 
-    return None  # 0 or 2+ candidates on the matched paper(s) -- don't guess
+    if not matched_candidate_ids and len(new_author_candidates) == 1:
+        new_id, author = next(iter(new_author_candidates.items()))
+        return {
+            "decision": "confirmed",
+            "stage": "publication_match_new_candidate",
+            "openalex_author_ids": new_id,
+            "openalex_display_names": author.get("display_name", ""),
+            "openalex_orcid": author.get("orcid", "") or "",
+            "reason": (f"Author not in the original candidate pool at all (candidate-generation gap), but "
+                       f"found by name+institution match on the real authorship list of a grant-resulting "
+                       f"publication found via title match ({len(checked_titles)} title(s) checked)"),
+        }
+
+    return None  # 0 or 2+ candidates, or conflicting evidence -- don't guess
 
 
 def main():

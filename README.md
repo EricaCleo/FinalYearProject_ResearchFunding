@@ -210,9 +210,16 @@ Stage 7 additionally calls the free Semantic Scholar API (no account needed eith
 
 - **Candidate generation gap**: for extremely common names, the correct OpenAlex
   profile can be missing from `search_candidates.py`'s results entirely (a
-  merged/garbage profile with an inflated works_count can outrank it). None of the
-  stages above can resolve this — it needs either a direct ORCID lookup from the PI's
-  own institutional page, or a direct paper-title search, done by hand.
+  merged/garbage profile with an inflated works_count can outrank it). Stage 5 now
+  partially covers this: if the grant-resulting publication's title match finds a
+  paper whose own authorship list has exactly one author matching the PI by name
+  AND institution, it confirms that author as a brand-new candidate (decision stage
+  `publication_match_new_candidate`) even though no row for them existed in the
+  original search-candidate pool — this is exactly how Wei Wang and Li Ying were
+  resolved manually in the pilot. It only helps when the PI has a scraped,
+  OpenAlex-findable publication, though — a PI with no usable `publications` data
+  and a missing candidate still needs a manual ORCID lookup from their institutional
+  page.
 - Stages 5–7 assume `rgc_project_ids` is pipe-separated (`|`), this project's existing
   convention for multi-value fields (comma is accepted as a fallback).
 - `triage_candidates.py` (grouping the review CSV into `likely_confirmed`/`needs_review`)
