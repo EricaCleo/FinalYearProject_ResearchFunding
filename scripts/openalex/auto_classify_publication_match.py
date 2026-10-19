@@ -164,13 +164,27 @@ def find_new_author_by_name_and_institution(work: dict, pi_name_clean: str, rgc_
     return None
 
 
+MAX_TITLES_PER_PI = 20  # see classify_pi's docstring note below
+
+
 def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | None:
+    """Checks each of the PI's recorded publication titles, live, against OpenAlex --
+    with no cap, a PI with 80-90+ recorded papers (not unusual for a senior professor
+    with many grants) means 80-90+ live network calls just for them, found to make
+    real runs take many minutes. Deduping repeated titles (the same paper is often
+    recorded once per completion report it appears in) and capping at
+    MAX_TITLES_PER_PI bounds this -- a PI whose identity can't be settled by their
+    first 20 distinct papers is already an unusual case, and capping only reduces how
+    much corroborating/conflicting evidence is gathered, it never flips a confirmed
+    match into a wrong one (titles_match still verifies each one individually)."""
     project_ids = split_ids(rows[0].get("rgc_project_ids", ""))
     titles = []
     for pid in project_ids:
         award = rgc_awards_by_id.get(pid)
         if award:
             titles.extend(extract_titles(award.get("publications", "")))
+
+    titles = list(dict.fromkeys(titles))[:MAX_TITLES_PER_PI]  # dedupe, preserve order, cap
 
     if not titles:
         return None  # no publication data to check against -- can't verify this way
