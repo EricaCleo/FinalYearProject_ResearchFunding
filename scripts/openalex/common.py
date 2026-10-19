@@ -52,6 +52,28 @@ INSTITUTION_ALIASES = {
     "eduhk": "Education University of Hong Kong",
 }
 
+# OpenAlex's own institution IDs for the 8 UGC-funded HK universities, keyed by the
+# same canonical names INSTITUTION_ALIASES normalizes to. Looked up directly via
+# OpenAlex (search_entities, entity_type=institutions) rather than guessed.
+INSTITUTION_OPENALEX_IDS = {
+    "City University of Hong Kong": "I168719708",
+    "University of Hong Kong": "I889458895",
+    "Chinese University of Hong Kong": "I177725633",
+    "Hong Kong University of Science and Technology": "I200769079",
+    "Hong Kong Polytechnic University": "I14243506",
+    "Hong Kong Baptist University": "I141568987",
+    "Lingnan University": "I165488957",
+    "Education University of Hong Kong": "I4210086892",
+}
+
+
+def institution_openalex_id(institution_raw: str) -> str:
+    """Looks up the OpenAlex institution ID for an RGC-scraped institution string, via
+    the same name normalization already used for institution_match comparisons. Returns
+    "" if the institution isn't one of the 8 UGC-funded universities this project
+    covers (or wasn't scraped close enough to one of INSTITUTION_ALIASES' known forms)."""
+    return INSTITUTION_OPENALEX_IDS.get(normalize_institution(institution_raw), "")
+
 
 def normalize_unicode(value) -> str:
     if value is None:

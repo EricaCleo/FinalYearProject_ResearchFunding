@@ -25,6 +25,7 @@ from tqdm import tqdm
 from common import (
     clean_person_name,
     generate_name_variants,
+    institution_openalex_id,
     normalize_institution,
     openalex_get,
     short_openalex_id,
@@ -36,15 +37,39 @@ def search_authors_by_name(name: str, per_page: int = 10) -> list[dict]:
     return data.get("results", [])
 
 
-def collect_author_candidates(pi_name_raw: str, per_variant: int = 10) -> list[dict]:
+def search_authors_by_name_at_institution(name: str, institution_id: str, per_page: int = 10) -> list[dict]:
+    """A plain name search only ever returns OpenAlex's top-K globally-relevant
+    results for that name -- for a common name, the correct person at the right
+    institution can rank below that cutoff and never appear at all, even though
+    institution_match() would have confirmed them immediately if they'd been in the
+    pool (found live: this happened for several real PIs with busy names). Searching
+    WITHIN the institution directly, rather than checking institution only after a
+    global name search, finds them regardless of their global name-relevance rank."""
+    data = openalex_get("authors", params={
+        "search": name,
+        "filter": f"last_known_institutions.lineage:{institution_id}",
+        "per_page": per_page,
+    })
+    return data.get("results", [])
+
+
+def collect_author_candidates(pi_name_raw: str, institution_raw: str = "", per_variant: int = 10) -> list[dict]:
     candidates = {}
-    for query_name in generate_name_variants(pi_name_raw):
-        for rank, author in enumerate(search_authors_by_name(query_name, per_variant), start=1):
+
+    def add_results(results, query_name):
+        for rank, author in enumerate(results, start=1):
             author_id = short_openalex_id(author.get("id"))
             if author_id not in candidates:
                 candidates[author_id] = {"author": author, "query_names": [], "best_search_rank": rank}
             candidates[author_id]["query_names"].append(query_name)
             candidates[author_id]["best_search_rank"] = min(candidates[author_id]["best_search_rank"], rank)
+
+    institution_id = institution_openalex_id(institution_raw)
+    for query_name in generate_name_variants(pi_name_raw):
+        add_results(search_authors_by_name(query_name, per_variant), query_name)
+        if institution_id:
+            add_results(search_authors_by_name_at_institution(query_name, institution_id, per_variant), query_name)
+
     return list(candidates.values())
 
 
@@ -118,7 +143,7 @@ def main():
     candidate_rows = []
     no_candidates = []
     for pi_row in tqdm(pis):
-        candidates = collect_author_candidates(pi_row["pi_name_raw"])
+        candidates = collect_author_candidates(pi_row["pi_name_raw"], pi_row["institution_raw"])
         if not candidates:
             no_candidates.append(pi_row["pi_name_raw"])
             continue
