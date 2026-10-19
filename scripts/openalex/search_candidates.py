@@ -63,7 +63,8 @@ def search_authors_by_name_at_institution(name: str, institution_id: str, per_pa
     return data.get("results", [])
 
 
-def collect_author_candidates(pi_name_raw: str, institution_raw: str = "", per_variant: int = 10) -> list[dict]:
+def collect_author_candidates(pi_name_raw: str, institution_raw: str = "", per_variant: int = 10,
+                               per_institution_variant: int = 50) -> list[dict]:
     candidates = {}
 
     def add_results(results, query_name):
@@ -78,7 +79,13 @@ def collect_author_candidates(pi_name_raw: str, institution_raw: str = "", per_v
     for query_name in generate_name_variants(pi_name_raw):
         add_results(search_authors_by_name(query_name, per_variant), query_name)
         if institution_id:
-            add_results(search_authors_by_name_at_institution(query_name, institution_id, per_variant), query_name)
+            # Wider net than the global name search: this is scoped to ONE institution
+            # already, so a higher per_page costs nothing extra in API calls and
+            # specifically catches very common names (e.g. "Wei Wang" -- confirmed
+            # live to rank 40th of ~126 institution-scoped matches, well past a 10-item
+            # cutoff but comfortably inside 50).
+            add_results(search_authors_by_name_at_institution(query_name, institution_id, per_institution_variant),
+                        query_name)
 
     return list(candidates.values())
 
