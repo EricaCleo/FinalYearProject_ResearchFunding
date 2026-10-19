@@ -44,10 +44,20 @@ def search_authors_by_name_at_institution(name: str, institution_id: str, per_pa
     institution_match() would have confirmed them immediately if they'd been in the
     pool (found live: this happened for several real PIs with busy names). Searching
     WITHIN the institution directly, rather than checking institution only after a
-    global name search, finds them regardless of their global name-relevance rank."""
+    global name search, finds them regardless of their global name-relevance rank.
+
+    Filters on affiliations.institution.id (the author's FULL historical affiliation
+    record), not last_known_institutions.lineage (current institution only) -- an
+    earlier version of this used last_known_institutions and still missed several real
+    PIs, because last_known reflects where someone is affiliated NOW, and a PI whose
+    career has moved on since their RGC grant year (e.g. Li Ying, since moved to
+    Shanghai Jiao Tong/Fudan) is correctly excluded by that filter even though they
+    genuinely were at the right institution when the grant was awarded. Confirmed live:
+    switching to the full affiliations history surfaced Li Ying at rank 4 of 10, where
+    last_known_institutions found nothing at all."""
     data = openalex_get("authors", params={
         "search": name,
-        "filter": f"last_known_institutions.lineage:{institution_id}",
+        "filter": f"affiliations.institution.id:{institution_id}",
         "per_page": per_page,
     })
     return data.get("results", [])
