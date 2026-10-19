@@ -155,7 +155,9 @@ def extract_titles(publications_raw: str) -> list[str]:
     return titles
 
 
-_MIN_SECONDS_BETWEEN_REQUESTS = 0.15  # ~6.5 req/sec, safely under OpenAlex's documented 10/sec cap
+_MIN_SECONDS_BETWEEN_REQUESTS = 0.3  # ~3.3 req/sec -- loosened from 0.15 (~6.5/sec) after hitting
+# real 429s even at the tighter pacing; OpenAlex's 10/sec cap is a ceiling the whole
+# pipeline should stay well under, not a target to approach
 _last_request_time = 0.0
 
 
@@ -202,9 +204,13 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
             continue
 
         if response.status_code == 429:
-            last_detail = "HTTP 429 rate limited"
+            # Include the response body -- OpenAlex's 429s distinguish a transient
+            # per-second limit from an exhausted daily budget (e.g. a prior
+            # "dailyRemainingUsd":0 response), and that distinction was previously
+            # being thrown away, making every 429 look identical and undebuggable.
+            last_detail = f"HTTP 429 rate limited: {response.text[:300]}"
             print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
-            time.sleep(min(2 ** attempt, 30))
+            time.sleep(min(2 ** attempt, 30) + 2)
             continue
 
         if not response.ok:
