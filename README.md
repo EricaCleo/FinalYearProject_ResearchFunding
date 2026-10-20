@@ -199,9 +199,23 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    are narrow research niches, so exact-word overlap between them is rare — it stays
    safe (declines rather than guesses on ambiguous/absent overlap) but won't resolve
    most remaining ties by itself.
-9. **Still unresolved after stage 7** — true manual review, same as the pilot: open the
-   candidate(s) on openalex.org and check institution/ORCID/paper topics by hand.
-10. **(Next, not yet built)** — for confirmed matches, download each author's full works
+9. **Stage 8 — RGC abstract check** (`auto_classify_abstract_match.py`) — for PIs still
+   tied, compares RGC's OWN scraped `abstract` field ("Abstract as per original
+   application") against each tied candidate's OpenAlex topics; confirms only when
+   exactly one candidate shares 2+ specific (non-generic) keywords with the grant's
+   abstract. Needs `rgc_awards.csv` (`--rgc-awards`). A sharper version of stage 7's
+   check: `abstract` is specific research content (methods, mechanisms, named
+   sub-topics), not a broad discipline label, so it discriminates far better between
+   same-institution, same-broad-field candidates — exactly the case stage 7 struggles
+   with (e.g. an extremely common name with several plausible same-field candidates).
+   Confirmed from real scraped data that `abstract` covers ~77% of `rgc_awards.csv`
+   rows (vs 0% for `objectives`, which despite being mapped in `parse_details.py` was
+   never actually populated in practice). Requires 2+ overlapping keywords rather than
+   stage 7's 1, since abstract prose has far more content words than a short
+   field/panel label, so a single shared word is more likely coincidental.
+10. **Still unresolved after stage 8** — true manual review, same as the pilot: open the
+    candidate(s) on openalex.org and check institution/ORCID/paper topics by hand.
+11. **(Next, not yet built)** — for confirmed matches, download each author's full works
     list and citation counts from OpenAlex, then join against `rgc_awards.csv` by PI to
     analyze funding size vs. research output.
 
@@ -216,6 +230,7 @@ python auto_classify_name_variants.py --input no_exact_match_candidates.csv --in
 python auto_classify_publication_match.py --input truly_unresolved.csv --rgc-awards rgc_awards.csv
 python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv --rgc-awards rgc_awards.csv
 python auto_classify_field_panel.py --input still_unresolved_stage6.csv --rgc-awards rgc_awards.csv
+python auto_classify_abstract_match.py --input still_unresolved_stage7.csv --rgc-awards rgc_awards.csv
 ```
 
 OpenAlex needs no account for normal use. Optionally set `OPENALEX_MAILTO` (your email)
