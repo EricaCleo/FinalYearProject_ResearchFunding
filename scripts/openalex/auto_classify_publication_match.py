@@ -88,6 +88,30 @@ def titles_match(openalex_title: str, rgc_citation: str) -> bool:
     return normalize_title(rgc_citation).startswith(openalex_norm)
 
 
+def extract_search_title(citation: str) -> str:
+    """RGC's `publications` field stores the full citation (title + journal name +
+    volume/pages, sometimes "(Early Access)" -- see module docstring), not a bare
+    title. Searching OpenAlex with the WHOLE citation attached was found live to
+    return ZERO results for papers that DO exist and match instantly on the bare
+    title alone (confirmed: "...Parabolic-Distributed Parameter Processes. IEEE
+    Transactions on Cybernetics. (Early Access)" found nothing, but the title alone
+    found the exact paper at rank 1) -- OpenAlex's `search` param needs reasonably
+    coherent query text, and appending unrelated journal/status words drags down
+    the match badly enough to lose it entirely. This approximates the bare title:
+    the quoted portion if the citation is quoted, otherwise the text before the
+    first ". " (titles can themselves contain a period, but titles_match() still
+    verifies the real match afterward against the UNTRUNCATED citation, so cutting
+    too aggressively here only risks a missed search, never a wrong confirmation)."""
+    stripped = citation.strip()
+    quote_match = re.match(r'^[“"\'](.+?)[”"\']', stripped)
+    if quote_match:
+        return quote_match.group(1)
+    period_idx = stripped.find(". ")
+    if period_idx > 15:
+        return stripped[:period_idx]
+    return stripped
+
+
 def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
     """OpenAlex's filter syntax (filter=title.search:...) uses a bare comma to
     separate multiple filters within one filter string -- a literal comma inside the
@@ -112,7 +136,7 @@ def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
     Stripped before searching -- this is only the candidate-retrieval query, not
     the final decision, so losing those characters here doesn't weaken the actual
     match verification titles_match() still does against the real returned title."""
-    search_text = title.replace("*", " ").replace("?", " ")
+    search_text = extract_search_title(title).replace("*", " ").replace("?", " ")
     data = openalex_get("works", params={"search": search_text, "per_page": max_results})
     return data.get("results", [])
 
