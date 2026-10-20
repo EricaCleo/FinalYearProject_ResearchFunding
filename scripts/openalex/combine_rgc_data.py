@@ -30,6 +30,15 @@ OUTPUT_COLUMNS = [
     # discarded.
     "status", "amount", "end_date", "field", "exercise_year",
     "co_investigators", "publications", "conferences", "source_url",
+    # Completion-report free-text fields -- previously dropped here even though
+    # to_csv.py already carries them through from parse_details.py. Added for
+    # auto_classify_text_match.py's pooled keyword-overlap matching (see that
+    # script for real coverage figures: layman_summary ~76%, the other three
+    # ~48% each -- "other_impact" stays excluded at ~11%, too sparse to be
+    # worth it). "email" isn't usable for OpenAlex matching (OpenAlex has no
+    # author email field) but is kept for manual-review lookups.
+    "email", "layman_summary", "realisation_of_objectives",
+    "objectives_addressed", "major_findings", "potential_development",
 ]
 
 YEAR_RE = re.compile(r"(20\d{2})")
@@ -86,6 +95,12 @@ def main():
                     "publications": row.get("publications", ""),
                     "conferences": row.get("conferences", ""),
                     "source_url": row.get("source_url", ""),
+                    "email": row.get("email", ""),
+                    "layman_summary": row.get("layman_summary", ""),
+                    "realisation_of_objectives": row.get("realisation_of_objectives", ""),
+                    "objectives_addressed": row.get("objectives_addressed", ""),
+                    "major_findings": row.get("major_findings", ""),
+                    "potential_development": row.get("potential_development", ""),
                 })
         print(f"  {path.name}: award_year={award_year}, {count_this_file} new rows")
 

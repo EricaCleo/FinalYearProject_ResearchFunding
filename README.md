@@ -199,20 +199,30 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    are narrow research niches, so exact-word overlap between them is rare — it stays
    safe (declines rather than guesses on ambiguous/absent overlap) but won't resolve
    most remaining ties by itself.
-9. **Stage 8 — RGC abstract check** (`auto_classify_abstract_match.py`) — for PIs still
-   tied, compares RGC's OWN scraped `abstract` field ("Abstract as per original
-   application") against each tied candidate's OpenAlex topics; confirms only when
-   exactly one candidate shares 2+ specific (non-generic) keywords with the grant's
-   abstract. Needs `rgc_awards.csv` (`--rgc-awards`). A sharper version of stage 7's
-   check: `abstract` is specific research content (methods, mechanisms, named
-   sub-topics), not a broad discipline label, so it discriminates far better between
-   same-institution, same-broad-field candidates — exactly the case stage 7 struggles
-   with (e.g. an extremely common name with several plausible same-field candidates).
-   Confirmed from real scraped data that `abstract` covers ~77% of `rgc_awards.csv`
-   rows (vs 0% for `objectives`, which despite being mapped in `parse_details.py` was
-   never actually populated in practice). Requires 2+ overlapping keywords rather than
-   stage 7's 1, since abstract prose has far more content words than a short
-   field/panel label, so a single shared word is more likely coincidental.
+9. **Stage 8 — RGC text check** (`auto_classify_text_match.py`) — for PIs still tied,
+   pools several of RGC's OWN scraped free-text fields per grant (`project_title`,
+   `abstract`, `layman_summary`, and the completion-report narrative fields
+   `realisation_of_objectives`/`objectives_addressed`/`major_findings`/
+   `potential_development`) and compares the combined text against each tied
+   candidate's OpenAlex topics; confirms only when exactly one candidate shares 2+
+   specific (non-generic) keywords with that combined text. Needs `rgc_awards.csv`
+   (`--rgc-awards`). A sharper version of stage 7's check: this text is specific
+   research content (methods, mechanisms, named sub-topics), not a broad discipline
+   label, so it discriminates far better between same-institution, same-broad-field
+   candidates — exactly the case stage 7 struggles with (e.g. an extremely common
+   name with several plausible same-field candidates). Originally compared `abstract`
+   alone (~77% coverage); pooling in the other fields adds real extra coverage since
+   each is populated independently (confirmed from the raw per-year RGC CSVs:
+   `project_title` 100%, `abstract` ~77%, `layman_summary` ~76%, the four
+   completion-report fields ~47-48% each — `objectives` is 0% despite being mapped in
+   `parse_details.py`, and `other_impact` at ~11% was excluded as too sparse). These
+   fields weren't carried into `rgc_awards.csv` until `combine_rgc_data.py`'s
+   `OUTPUT_COLUMNS` was extended for this stage — re-run `combine_rgc_data.py` on your
+   original per-year CSVs to pick them up. Requires 2+ overlapping keywords rather
+   than stage 7's 1, since this pooled text has far more content words than a short
+   field/panel label, so a single shared word is more likely coincidental. `email` is
+   also now carried through `rgc_awards.csv` (not used for OpenAlex matching — OpenAlex
+   has no author email field — but useful for manual-review lookups).
 10. **Still unresolved after stage 8** — true manual review, same as the pilot: open the
     candidate(s) on openalex.org and check institution/ORCID/paper topics by hand.
 11. **(Next, not yet built)** — for confirmed matches, download each author's full works
@@ -230,7 +240,7 @@ python auto_classify_name_variants.py --input no_exact_match_candidates.csv --in
 python auto_classify_publication_match.py --input truly_unresolved.csv --rgc-awards rgc_awards.csv
 python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv --rgc-awards rgc_awards.csv
 python auto_classify_field_panel.py --input still_unresolved_stage6.csv --rgc-awards rgc_awards.csv
-python auto_classify_abstract_match.py --input still_unresolved_stage7.csv --rgc-awards rgc_awards.csv
+python auto_classify_text_match.py --input still_unresolved_stage7.csv --rgc-awards rgc_awards.csv
 ```
 
 OpenAlex needs no account for normal use. Optionally set `OPENALEX_MAILTO` (your email)
