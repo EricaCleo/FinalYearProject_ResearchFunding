@@ -194,14 +194,24 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    overlaps. Needs `rgc_awards.csv` (`--rgc-awards`).
 8. **Stage 7 — RGC field/panel check** (`auto_classify_field_panel.py`) — for PIs still
    tied, compares RGC's OWN scraped `field`/`panel` columns against each tied
-   candidate's OpenAlex topics; confirms only when exactly one candidate shares a
-   specific (non-generic) keyword with RGC's recorded subject area. Needs
-   `rgc_awards.csv` (`--rgc-awards`). An earlier version of this stage used Semantic
-   Scholar (an automatable equivalent of manually checking Google Scholar) instead,
-   but that compared two non-RGC sources against each other, which breaks this
+   candidate's OpenAlex topics; confirms only when exactly one *institution-matched*
+   candidate shares 2+ specific (non-generic) keywords with RGC's recorded subject
+   area. Needs `rgc_awards.csv` (`--rgc-awards`). An earlier version of this stage used
+   Semantic Scholar (an automatable equivalent of manually checking Google Scholar)
+   instead, but that compared two non-RGC sources against each other, which breaks this
    project's own rule that filtering stay grounded in RGC's own data — fixed by using
-   `field`/`panel` as the actual ground truth instead. Known to have fairly low yield
-   in practice: RGC's categories are broad discipline names while OpenAlex's topics
+   `field`/`panel` as the actual ground truth instead.
+
+   **Real bug found via manual spot-check** (not just theoretical): this stage
+   originally had NO institution_match check at all (the only stage in the pipeline
+   missing it) and confirmed on just 1 overlapping keyword. A 5-row random spot-check
+   against its "confirmed" output found 4 of 5 WRONG — all matched to massive conflated
+   OpenAlex profiles (many unrelated real people merged into one ID, huge inflated
+   works_count) via a single generic shared word ("mechanical"/"medicine"/"health"),
+   with zero actual connection to the PI's real institution. Fixed by requiring
+   institution_match and raising the keyword threshold to 2. Known to have fairly low
+   yield in practice even after the fix: RGC's categories are broad discipline names
+   while OpenAlex's topics
    are narrow research niches, so exact-word overlap between them is rare — it stays
    safe (declines rather than guesses on ambiguous/absent overlap) but won't resolve
    most remaining ties by itself.

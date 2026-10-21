@@ -34,11 +34,28 @@ an RGC field and either a correct or incorrect candidate's topics is often
 a generic term like "materials" itself, which doesn't distinguish anyone
 (both candidates can plausibly carry it). There's also no stemming, so
 "metallurgy" vs "metallurgical" won't match even when they name the same
-discipline. This stage stays SAFE (ambiguous or absent overlap just means
-it declines rather than guesses, same as every other stage here), but
-expect it to confirm comparatively few PIs -- it's kept because a safe,
-low-yield, RGC-grounded signal is still worth having, not because it's
-expected to resolve most remaining ties.
+discipline.
+
+REAL BUG, found via manual spot-check (not just a theoretical risk): this
+stage was the only one in the entire pipeline (1-6 all require it) that
+never checked institution_match at all -- it only required ONE overlapping
+keyword, with no institution-match gate to catch a wrong candidate at all.
+Combined with the weak-keyword-vocabulary problem above, this produced
+real false positives in practice: a 5-row random spot-check against
+already-"confirmed" field_panel matches found 4 of 5 WRONG, every one of
+them a massive conflated OpenAlex profile (many different unrelated real
+people merged into one ID by OpenAlex, each with a huge inflated
+works_count) that shared one generic word ("mechanical", "medicine",
+"health") with RGC's field/panel and had ZERO actual connection to the
+PI's real institution. Fixed by (1) requiring institution_match == 1
+before a candidate counts at all, same baseline every other stage already
+enforces, and (2) raising the overlap requirement from 1 to 2 keywords as
+additional insurance, since a single generic word is still weak evidence
+even with institution confirmed. This stage stays SAFE in its *remaining*
+design (ambiguous or absent overlap still just declines rather than
+guesses), but expect it to confirm noticeably fewer PIs than before this
+fix -- most of its previous "confirmations" were the bug, not real
+matches.
 
 Usage:
     python auto_classify_field_panel.py --input still_unresolved_stage6.csv \
@@ -89,16 +106,23 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
     if not rgc_keywords:
         return None  # no RGC field/panel data to check against -- can't verify this way
 
-    # A single overlapping keyword is enough here (unlike other stages in this
-    # pipeline) -- RGC's field/panel text is short (often just 2-4 content words
-    # once generic STEM filler is excluded), so requiring 2+ overlaps is an
-    # unreachable bar even for a genuine match. The generic-word risk this would
-    # otherwise create is handled by excluding broad terms via STOPWORDS instead.
+    # institution_match is required here -- same baseline every other stage in
+    # this pipeline already enforces. Its absence was a real bug (see module
+    # docstring): without it, a candidate with zero actual connection to the
+    # PI's institution could still get confirmed purely on a coincidental
+    # shared keyword, and in practice this is exactly what happened.
+    #
+    # Requires 2+ overlapping keywords (raised from 1) as additional insurance
+    # -- a single generic word is weak evidence even with institution now
+    # confirmed, and the spot-check false positives found live all matched on
+    # just one generic term ("mechanical", "medicine", "health").
     matched = []
     for r in rows:
+        if r.get("institution_match") != "1":
+            continue
         candidate_keywords = topic_keywords(r.get("candidate_topics", ""))
         overlap = candidate_keywords & rgc_keywords
-        if overlap:
+        if len(overlap) >= 2:
             matched.append((r, overlap))
 
     if len(matched) == 1:
