@@ -149,13 +149,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="unique_pis.csv from combine_rgc_data.py")
     parser.add_argument("--pilot-size", type=int, default=40)
+    parser.add_argument("--offset", type=int, default=0,
+                         help="Skip this many PIs before taking --pilot-size -- e.g. --offset 40 "
+                              "--pilot-size 40 runs PIs 41-80, a second pilot batch distinct from "
+                              "the default first-40 batch.")
     parser.add_argument("--out-candidates", default="author_candidates_pilot.csv")
     parser.add_argument("--out-review", default="author_candidates_for_review.csv")
     args = parser.parse_args()
 
     with open(args.input, encoding="utf-8-sig") as f:
-        pis = list(csv.DictReader(f))[: args.pilot_size]
-    print(f"{len(pis)} PIs in this pilot batch")
+        all_pis = list(csv.DictReader(f))
+    pis = all_pis[args.offset: args.offset + args.pilot_size]
+    print(f"{len(pis)} PIs in this pilot batch (offset {args.offset}, of {len(all_pis)} total unique PIs)")
 
     candidate_rows = []
     no_candidates = []
