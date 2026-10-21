@@ -173,10 +173,16 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    the same real person split across OpenAlex profiles. Does NOT use works_count as a
    tie-breaker — "no ORCID conflict" is not proof of identity.
 5. **Stage 4 — name-formatting variants** (`auto_classify_name_variants.py`) — handles
-   two gaps exact-token matching correctly declines to guess: initials vs. spelled-out
-   given names (e.g. "S.Y.R. Hui" vs "Ron Shu-Yuen Hui"), and compound given-name
-   splitting (e.g. "Wenxiong" vs "Wen-Xiong"). Same proven-ORCID-duplicate handling as
-   stage 3 for ties.
+   three gaps exact-token matching correctly declines to guess: initials vs. spelled-out
+   given names (e.g. "S.Y.R. Hui" vs "Ron Shu-Yuen Hui"), compound given-name
+   splitting (e.g. "Wenxiong" vs "Wen-Xiong"), and one extra given name on the
+   OpenAlex side not recorded by RGC at all (e.g. RGC's "Ho-man Chan" vs OpenAlex's
+   "Rosa Ho Man Chan" — a real HK-academia pattern of publishing under an added
+   English given name; found live in the second pilot batch, where it was the
+   *only* institution-matched candidate for that PI). The third pattern requires
+   every one of RGC's name tokens to be present on the candidate's side and caps
+   the tolerance at exactly one extra token, to stay as narrow as the other two.
+   Same proven-ORCID-duplicate handling as stage 3 for ties.
 6. **Stage 5 — publication-title match** (`auto_classify_publication_match.py`) —
    for PIs still tied, searches OpenAlex for the actual grant-resulting paper (from
    RGC's own scraped `publications` field) by exact normalized title, and reads the

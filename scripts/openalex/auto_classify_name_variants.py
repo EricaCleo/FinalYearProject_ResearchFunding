@@ -1,7 +1,7 @@
 """
-Stage 4 of the automated PI matching pipeline: handles two specific name-
-formatting gaps that exact name-token matching (stages 1-3) correctly
-declines to guess, found in the pilot:
+Stage 4 of the automated PI matching pipeline: handles name-formatting gaps
+that exact name-token matching (stages 1-3) correctly declines to guess,
+found in the pilots:
 
 Pattern 1 -- initials vs. full given name. OpenAlex sometimes stores a
 middle/given name as initials instead of spelling it out, e.g.
@@ -17,12 +17,26 @@ Handled by also comparing the two names with ALL non-letter characters
 stripped and no tokenization at all (so "wenxiong wang" and "wen-xiong
 wang" both become "wenxiongwang").
 
-A candidate counts as a match if EITHER comparison succeeds. This is
-intentionally still strict: it does not touch surname matching (which
-stays exact), and it does not accept initials unless the number of
-remaining given-name tokens lines up. It is only applied to candidates
-institution-matched but left unresolved by stages 1-3 -- never loosens
-anything the stricter stages already decided.
+Pattern 3 -- one extra given name on the OpenAlex side. Found live in the
+second pilot batch: RGC recorded "Ho-man Chan", but the only
+institution-matched candidate was "Rosa Ho Man Chan" -- a real, common HK
+academia pattern where someone publishes under an added English given name
+RGC's own record doesn't carry at all (not an initials difference, not a
+compound-name split -- a genuinely extra token). Handled by checking that
+ALL of the PI's name tokens are present in the candidate's name tokens
+(so the surname and every given-name token RGC recorded must still be
+there), tolerating EXACTLY ONE extra token on the candidate's side. Capped
+at exactly one extra token (not "any number") to keep this as narrow as
+patterns 1-2 -- a PI's name being a small subset of an unrelated, longer
+name is a real false-positive risk otherwise.
+
+A candidate counts as a match if ANY of the three comparisons succeeds.
+This is intentionally still strict: none of the patterns touch surname
+matching (which must still be present on both sides), and pattern 1 does
+not accept initials unless the number of remaining given-name tokens lines
+up. It is only applied to candidates institution-matched but left
+unresolved by stages 1-3 -- never loosens anything the stricter stages
+already decided.
 
 Usage:
     python auto_classify_name_variants.py --input not_found.csv --input2 still_unresolved.csv \
@@ -53,11 +67,25 @@ def concat_form(name: str) -> str:
     return "".join(raw_tokens(name))
 
 
+def token_set(name: str) -> frozenset[str]:
+    return frozenset(raw_tokens(name))
+
+
+def one_extra_given_name(pi_name_clean: str, candidate_name: str) -> bool:
+    pi_tokens = token_set(pi_name_clean)
+    candidate_tokens = token_set(candidate_name)
+    if not pi_tokens or not pi_tokens.issubset(candidate_tokens):
+        return False
+    return len(candidate_tokens - pi_tokens) == 1
+
+
 def names_match(pi_name_clean: str, candidate_name: str) -> str | None:
     if initials_form(pi_name_clean) == initials_form(candidate_name) and initials_form(pi_name_clean):
         return "initials"
     if concat_form(pi_name_clean) == concat_form(candidate_name) and concat_form(pi_name_clean):
         return "concatenated"
+    if one_extra_given_name(pi_name_clean, candidate_name):
+        return "extra_given_name"
     return None
 
 
