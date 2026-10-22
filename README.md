@@ -157,9 +157,13 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    can still get resolved through an older, completed grant of theirs — but only if this
    step actually combined their project IDs first. Outputs `unique_pis.csv`.
 1. **Search candidates** (`search_candidates.py`) — for each unique PI, searches OpenAlex
-   by name variants and gathers evidence (name similarity, institution match, topics,
+   by name variants (both globally and scoped to the PI's institution, using the
+   candidate's full historical affiliation record rather than just their current
+   institution) and gathers evidence (name similarity, institution match, topics,
    ORCID, works/citation counts) for every candidate author found. This does NOT decide
    who's correct — it only collects evidence. Outputs `author_candidates_pilot.csv`.
+   Supports `--offset` to run a different slice of PIs (e.g. `--offset 40 --pilot-size 40`
+   runs PIs 41-80, a second batch distinct from the default first 40).
 2. **Stage 1 — institution + exact name** (`auto_classify_institution.py`) — confirms a
    PI when exactly one candidate matches BOTH the RGC institution and an exact
    name-token match. Also writes full candidate rows for PIs with 0 matches
@@ -233,6 +237,39 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
     list and citation counts from OpenAlex, then join against `rgc_awards.csv` by PI to
     analyze funding size vs. research output.
 
+### Post-hoc audit: checking confirmed matches, not just classifying new ones
+
+Stages 1–4 never check a candidate's research topic or affiliation timing at all —
+by design, name + institution match was treated as sufficient once unambiguous. A
+manual spot-check of already-"confirmed" matches found this is occasionally wrong: a
+candidate can share a PI's exact name and have the right institution somewhere in
+their career, yet be a genuinely different real person (a name collision), or the
+PI's real identity can resolve to an OpenAlex profile that's itself a merge of
+several unrelated same-named people (profile conflation — the inverse of the
+already-known profile-fragmentation problem, where OpenAlex instead splits ONE real
+person across several unmerged profiles).
+
+Two scripts audit every CONFIRMED match, from any stage, after the fact — they never
+add a new way to confirm anything, only flag an existing confirmation for review:
+
+- **`sanity_check_confirmed.py`** — flags a confirmed match when the candidate's
+  OpenAlex topics share zero keyword overlap with RGC's own
+  `field`/`panel`/`project_title` text for that PI's grant(s). Looks up topics from
+  the candidate-pool CSV(s) that produced each match, not a live re-fetch.
+- **`sanity_check_affiliation_years.py`** — flags a confirmed match when none of the
+  candidate's OpenAlex-recorded years at the PI's institution fall within
+  `--tolerance-years` (default 3) of the grant's real `award_year`. Does a live
+  OpenAlex lookup per confirmed PI (affiliation years aren't cached anywhere else) —
+  a harder, non-fuzzy signal than topic overlap, since affiliation years are a
+  recorded fact rather than a keyword-matching judgment call.
+
+Also useful for manual review directly: **`inspect_candidates.py`** — for one named
+PI, ranks their candidate profiles by keyword overlap with RGC's grant text, plus
+(if `sentence-transformers` is installed — optional, not a hard dependency) a
+semantic similarity score that catches paraphrase/synonym matches literal keyword
+overlap misses (e.g. "fault detection" vs. "anomaly diagnosis"). Prints a ranked
+comparison for a human to read; never auto-decides anything.
+
 ```
 python combine_rgc_data.py --input-dir path/to/per-year/csvs --out rgc_awards.csv
 python build_unique_pis.py --input rgc_awards.csv --out unique_pis.csv
@@ -268,6 +305,27 @@ for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor pr
 - `triage_candidates.py` (grouping the review CSV into `likely_confirmed`/`needs_review`)
   predates the staged pipeline above and is kept for ad hoc manual spot-checks, not as a
   pipeline step.
+- **Two distinct OpenAlex data-quality failure modes**, both found via manual
+  spot-check of "confirmed" matches:
+  - **Fragmentation**: one real person's output split across multiple unmerged
+    OpenAlex profiles (each individually correct, just incomplete). The pipeline
+    handles this correctly when a shared ORCID proves it — stages 3–4 keep every
+    proven ID together rather than picking one.
+  - **Conflation** (the inverse, harder problem): many different real people who
+    share a common name merged by OpenAlex's own disambiguation system into ONE
+    profile, whose works_count/citations mix multiple unrelated people's output.
+    Evidence used to diagnose it: affiliation years overlapping at unrelated
+    institutions in the same year (one person can't work two unrelated jobs at
+    once), incoherent mixed research fields, an implausible output volume for one
+    individual, and (always) an extremely common name. Unlike fragmentation, there
+    is no pipeline-side fix — if even a PI's correctly-identified ORCID resolves to
+    a conflated profile, there's no clean OpenAlex data to link them to at all.
+    Found in two forms: (a) a weak-signal stage confirming an entirely
+    different-named, unrelated candidate that also happened to be conflated (fixed
+    by the stage-7 institution-match fix above), and (b) a genuine name collision
+    where even the correct, manually-verified identity has no clean profile
+    (unresolved in the pilot: one PI with no matching OpenAlex profile at all, two
+    PIs whose correct ORCID resolves to a conflated profile).
 
 ## Next steps
 
