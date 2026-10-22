@@ -170,7 +170,11 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
    (`--out-no-exact-match`) so stage 4 can still use them.
 3. **Stage 2 — ORCID among exact-name matches** (`auto_classify_orcid.py`) — for PIs
    still tied after stage 1, confirms when exactly one of the institution+exact-name
-   candidates carries a non-empty ORCID.
+   candidates carries a non-empty ORCID. ORCID is self-registered, so among
+   candidates already matching on exact institution and exact name it's
+   corroborating evidence of a real, established profile — not proof, which is why
+   the post-hoc audit below (topic and affiliation-year checks) also re-verifies
+   every confirmation this stage makes.
 4. **Stage 3 — proven ORCID duplicates** (`auto_classify_exact_name.py`) — for PIs still
    tied, confirms (retaining ALL of them — needed later to dedupe combined publication
    records) when 2+ tied candidates share the literal same ORCID, which is proof they're
