@@ -239,36 +239,21 @@ classification logic can fix. That's a known, open gap; see "Known limitations" 
 
 ### Post-hoc audit: checking confirmed matches, not just classifying new ones
 
-Stages 1–4 never check a candidate's research topic or affiliation timing at all —
-by design, name + institution match was treated as sufficient once unambiguous. A
-manual spot-check of already-"confirmed" matches found this is occasionally wrong: a
-candidate can share a PI's exact name and have the right institution somewhere in
-their career, yet be a genuinely different real person (a name collision), or the
-PI's real identity can resolve to an OpenAlex profile that's itself a merge of
-several unrelated same-named people (profile conflation — the inverse of the
-already-known profile-fragmentation problem, where OpenAlex instead splits ONE real
-person across several unmerged profiles).
+Stages 1–4 never check topic or affiliation timing, only name + institution. A manual
+spot-check of "confirmed" matches found this can let through a name collision (same
+name, wrong person) or a conflated OpenAlex profile. Two scripts audit every confirmed
+match afterward — they only flag for review, never confirm anything new:
 
-Two scripts audit every CONFIRMED match, from any stage, after the fact — they never
-add a new way to confirm anything, only flag an existing confirmation for review:
+- **`sanity_check_confirmed.py`** — flags a match with zero keyword overlap between
+  the candidate's OpenAlex topics and RGC's `field`/`panel`/`project_title`.
+- **`sanity_check_affiliation_years.py`** — flags a match where none of the
+  candidate's recorded years at the institution fall within `--tolerance-years`
+  (default 3) of the grant's `award_year`. Live OpenAlex lookup; a harder,
+  non-fuzzy signal than topic overlap.
 
-- **`sanity_check_confirmed.py`** — flags a confirmed match when the candidate's
-  OpenAlex topics share zero keyword overlap with RGC's own
-  `field`/`panel`/`project_title` text for that PI's grant(s). Looks up topics from
-  the candidate-pool CSV(s) that produced each match, not a live re-fetch.
-- **`sanity_check_affiliation_years.py`** — flags a confirmed match when none of the
-  candidate's OpenAlex-recorded years at the PI's institution fall within
-  `--tolerance-years` (default 3) of the grant's real `award_year`. Does a live
-  OpenAlex lookup per confirmed PI (affiliation years aren't cached anywhere else) —
-  a harder, non-fuzzy signal than topic overlap, since affiliation years are a
-  recorded fact rather than a keyword-matching judgment call.
-
-Also useful for manual review directly: **`inspect_candidates.py`** — for one named
-PI, ranks their candidate profiles by keyword overlap with RGC's grant text, plus
-(if `sentence-transformers` is installed — optional, not a hard dependency) a
-semantic similarity score that catches paraphrase/synonym matches literal keyword
-overlap misses (e.g. "fault detection" vs. "anomaly diagnosis"). Prints a ranked
-comparison for a human to read; never auto-decides anything.
+Also useful directly: **`inspect_candidates.py`** — ranks one PI's candidates by
+keyword overlap plus (if `sentence-transformers` is installed) semantic similarity.
+Prints a ranked comparison for manual review; never auto-decides.
 
 ```
 python combine_rgc_data.py --input-dir path/to/per-year/csvs --out rgc_awards.csv
@@ -305,27 +290,17 @@ for faster, more reliable responses, or `OPENALEX_API_KEY` if your supervisor pr
 - `triage_candidates.py` (grouping the review CSV into `likely_confirmed`/`needs_review`)
   predates the staged pipeline above and is kept for ad hoc manual spot-checks, not as a
   pipeline step.
-- **Two distinct OpenAlex data-quality failure modes**, both found via manual
-  spot-check of "confirmed" matches:
+- **Two OpenAlex data-quality failure modes**, both found via manual spot-check:
   - **Fragmentation**: one real person's output split across multiple unmerged
-    OpenAlex profiles (each individually correct, just incomplete). The pipeline
-    handles this correctly when a shared ORCID proves it — stages 3–4 keep every
-    proven ID together rather than picking one.
-  - **Conflation** (the inverse, harder problem): many different real people who
-    share a common name merged by OpenAlex's own disambiguation system into ONE
-    profile, whose works_count/citations mix multiple unrelated people's output.
-    Evidence used to diagnose it: affiliation years overlapping at unrelated
-    institutions in the same year (one person can't work two unrelated jobs at
-    once), incoherent mixed research fields, an implausible output volume for one
-    individual, and (always) an extremely common name. Unlike fragmentation, there
-    is no pipeline-side fix — if even a PI's correctly-identified ORCID resolves to
-    a conflated profile, there's no clean OpenAlex data to link them to at all.
-    Found in two forms: (a) a weak-signal stage confirming an entirely
-    different-named, unrelated candidate that also happened to be conflated (fixed
-    by the stage-7 institution-match fix above), and (b) a genuine name collision
-    where even the correct, manually-verified identity has no clean profile
-    (unresolved in the pilot: one PI with no matching OpenAlex profile at all, two
-    PIs whose correct ORCID resolves to a conflated profile).
+    OpenAlex profiles. Pipeline handles this correctly via shared-ORCID proof
+    (stages 3–4 keep every proven ID together).
+  - **Conflation** (harder, no pipeline-side fix): many different real people with
+    the same name merged into ONE OpenAlex profile, contaminating its
+    works_count/citations. Signs: affiliation years overlapping at unrelated
+    institutions, incoherent mixed research fields, implausible output volume, an
+    extremely common name. If even a PI's correct, manually-verified ORCID
+    resolves to a conflated profile, there's no clean data to link them to —
+    found in the pilot for 2 PIs (plus 1 PI with no matching profile at all).
 
 ## Next steps
 
