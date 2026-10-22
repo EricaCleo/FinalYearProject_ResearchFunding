@@ -1,48 +1,21 @@
 """
-Stage 5 of the automated PI matching pipeline: resolves PIs still tied after
-stages 1-4 by searching OpenAlex for the actual grant-resulting publication
-(RGC's own `publications` field, scraped per project) and reading the real
-author ID straight off that paper's authorship list.
+Stage 5: for PIs still tied after stages 1-4, searches OpenAlex for the
+actual grant-resulting publication (RGC's own `publications` field) and
+reads the real author ID off that paper's authorship list.
 
-This is the single most reliable manual technique used during pilot review
--- it is what resolved Tan Siew Chong (whose correct candidate WAS in the
-original pool, just not exact-name-matched) and, in an extended form below,
-Wei Wang and Li Ying (whose correct candidates were NEVER in the original
-search-candidate pool at all -- a candidate-GENERATION failure, not a
-classification one). This stage automates both instead of leaving them as
-one-off manual steps.
+Needs rgc_awards.csv to look up each PI's publications by project_id. That
+field is RGC's own Research Output table, a JSON list of {column_header:
+value} dicts -- reads any key containing "title" since the header varies.
 
-A plain intersection against the existing candidate rows (the first check
-below) only rescues cases like Tan Siew Chong's. For cases like Wei Wang's
-and Li Ying's, where no row for the correct author exists to intersect
-against at all, `find_new_author_by_name_and_institution` instead reads the
-matched paper's own authorship list directly for a name+institution match
-and introduces that as a brand-new confirmed ID (stage
-"publication_match_new_candidate") -- never run against an unconflicting
-answer from the first check, so it only fires when there's truly nothing in
-the existing pool to confirm.
+RGC's title field is usually a combined citation string (title + journal +
+volume/pages), not a pure title, so matching uses prefix containment
+against the normalized OpenAlex title rather than exact equality.
 
-Requires a copy of rgc_awards.csv (output of combine_rgc_data.py) to look up
-each PI's publications by project_id. The `publications` column there is a
-JSON-encoded list of {column_header: value} dicts straight from RGC's own
-Research Output table (see scripts/rgc/parse_details.py) -- whatever the
-scraped header happened to be, so this reads any key containing "title"
-rather than assuming one exact column name.
-
-Confirmed from real scraped data (2015_results.csv) that this field is
-usually headed "Title and Journal/Book" and its value is a COMBINED
-citation string -- the real title followed directly by the journal name,
-volume, and pages, e.g. "Recent Advances in ... Neurodegeneration.
-Frontiers in Aging Neuroscience 9: 128." -- not a pure title. Exact-equality
-comparison against OpenAlex's own (pure) title would therefore never match
-anything real. The real title is consistently the LEADING portion of this
-combined string across every citation format seen (period-separated,
-comma-separated, or quoted), so a candidate counts as confirmed if their
-candidate_author_id appears in the real authorship list of a paper whose
-normalized OpenAlex title is a PREFIX of the normalized scraped citation
-string -- still not fuzzy/approximate matching (the comparison is exact
-after normalization, just anchored at the start rather than the whole
-string), so an unrelated paper with a different title still can't match.
+Two ways a candidate gets confirmed: if their ID is already in the
+candidate pool (the exact-name stages just didn't match them), or, if
+nobody in the pool matches at all, by reading the matched paper's own
+authorship list directly for a name+institution match and introducing them
+as a new candidate.
 
 Usage:
     python auto_classify_publication_match.py --input truly_unresolved.csv \
@@ -59,9 +32,7 @@ from common import extract_titles, normalize_institution, openalex_get, short_op
 
 
 def split_ids(value: str) -> list[str]:
-    """This project's own convention is pipe-separated (|) for multi-value fields
-    (see openalex_author_ids). Comma is accepted as a fallback in case
-    unique_pis.csv was built with that delimiter instead."""
+    # pipe-separated is this project's convention; comma is a fallback
     value = (value or "").strip()
     if not value:
         return []
@@ -76,12 +47,8 @@ def normalize_title(title: str) -> str:
 
 
 def titles_match(openalex_title: str, rgc_citation: str) -> bool:
-    """rgc_citation may be a pure title or a combined "title + journal/volume/pages"
-    citation string (see module docstring) -- either way the real title is always
-    the leading portion, so this checks prefix containment rather than equality.
-    Requires a reasonably long title (>= 15 normalized chars) before trusting a
-    prefix match at all, so a short/generic OpenAlex title can't spuriously match
-    the start of an unrelated citation."""
+    # prefix match since rgc_citation can have journal/volume/pages tacked on;
+    # require >=15 chars so a short title can't spuriously match
     openalex_norm = normalize_title(openalex_title)
     if len(openalex_norm) < 15:
         return False
@@ -89,19 +56,11 @@ def titles_match(openalex_title: str, rgc_citation: str) -> bool:
 
 
 def extract_search_title(citation: str) -> str:
-    """RGC's `publications` field stores the full citation (title + journal name +
-    volume/pages, sometimes "(Early Access)" -- see module docstring), not a bare
-    title. Searching OpenAlex with the WHOLE citation attached was found live to
-    return ZERO results for papers that DO exist and match instantly on the bare
-    title alone (confirmed: "...Parabolic-Distributed Parameter Processes. IEEE
-    Transactions on Cybernetics. (Early Access)" found nothing, but the title alone
-    found the exact paper at rank 1) -- OpenAlex's `search` param needs reasonably
-    coherent query text, and appending unrelated journal/status words drags down
-    the match badly enough to lose it entirely. This approximates the bare title:
-    the quoted portion if the citation is quoted, otherwise the text before the
-    first ". " (titles can themselves contain a period, but titles_match() still
-    verifies the real match afterward against the UNTRUNCATED citation, so cutting
-    too aggressively here only risks a missed search, never a wrong confirmation)."""
+    # searching OpenAlex with the full citation (title + journal name) attached
+    # can return zero results even when the bare title finds the paper instantly,
+    # so approximate the bare title: quoted portion if quoted, else text before
+    # the first ". " -- titles_match() still verifies against the full citation
+    # after, so an over-aggressive cut here only risks a missed search
     stripped = citation.strip()
     quote_match = re.match(r'^[“"\'](.+?)[”"\']', stripped)
     if quote_match:
@@ -113,29 +72,10 @@ def extract_search_title(citation: str) -> str:
 
 
 def search_work_by_title(title: str, max_results: int = 5) -> list[dict]:
-    """OpenAlex's filter syntax (filter=title.search:...) uses a bare comma to
-    separate multiple filters within one filter string -- a literal comma inside the
-    title text (very common in real paper titles, e.g. "Title: A Study of X, Y, and
-    Z") breaks the request with an HTTP 400. Found live running this against real RGC
-    publication data; quoting the value (OpenAlex's own documented escape mechanism)
-    did NOT fix it in practice -- the edge proxy appears to split on commas before
-    any quote-aware parsing. Sidesteps the whole escaping problem by using OpenAlex's
-    plain top-level `search` parameter instead of the filter mini-language: it isn't
-    comma-delimited at all, so normal URL-encoding (which requests already does
-    correctly) just works. This searches title+abstract+fulltext rather than title
-    only, a broader net than before, but that's safe here -- classify_pi's own
-    titles_match() still verifies the returned work's actual title before accepting
-    it, so a broader initial search can't cause a wrong match, only find the right
-    one that a title-only filter might have required exact escaping to reach.
-
-    One more real-world wrinkle found live: OpenAlex's `search` param treats a
-    literal "*" or "?" in the query text as wildcard syntax ("Wildcards require
-    exact (no-stem) search"), and real paper titles can genuinely contain either
-    (a trailing "?" on a question-style title is common; RGC's own data also uses
-    "*" as a footnote marker that occasionally leaks into scraped title text).
-    Stripped before searching -- this is only the candidate-retrieval query, not
-    the final decision, so losing those characters here doesn't weaken the actual
-    match verification titles_match() still does against the real returned title."""
+    # uses the plain `search` param rather than filter=title.search:... -- a comma
+    # in the title breaks the filter mini-language's parsing with an HTTP 400.
+    # Also strips * and ? since OpenAlex treats them as wildcard syntax;
+    # titles_match() still verifies the real result afterward either way.
     search_text = extract_search_title(title).replace("*", " ").replace("?", " ")
     data = openalex_get("works", params={"search": search_text, "per_page": max_results})
     return data.get("results", [])
@@ -155,17 +95,9 @@ def name_tokens(name: str) -> frozenset[str]:
 
 
 def find_new_author_by_name_and_institution(work: dict, pi_name_clean: str, rgc_institution: str) -> dict | None:
-    """Rescue path for PIs whose correct OpenAlex author was never in the original
-    search-candidate pool at all (a candidate-GENERATION failure, not a classification
-    one -- see README "Known limitations"). This happened in the pilot for very common
-    names (e.g. Li Ying, Wei Wang): manual resolution found the correct author by
-    searching the grant paper's title directly and reading the author off its real
-    authorship list, same as the rest of this stage, but that author's ID was never a
-    row in the input candidate CSV to begin with. Checks the paper's OWN authorship
-    entries (name exact-token match to the PI, institution as recorded on THAT
-    authorship, not the author's broader profile) rather than assuming a candidate row
-    already exists. Only returns a result when exactly one authorship entry matches
-    both -- same "don't guess" standard as everywhere else in this pipeline."""
+    # rescue path for PIs whose correct author was never in the candidate pool at
+    # all -- checks the paper's own authorship entries for a name+institution
+    # match instead. Only returns a result if exactly one entry matches both.
     pi_tokens = name_tokens(pi_name_clean)
     if not pi_tokens:
         return None
@@ -188,23 +120,10 @@ def find_new_author_by_name_and_institution(work: dict, pi_name_clean: str, rgc_
     return None
 
 
-MAX_TITLES_PER_PI = 50  # see classify_pi's docstring note below
+MAX_TITLES_PER_PI = 50  # cap network calls for prolific PIs; sorted longest-first below
 
 
 def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | None:
-    """Checks each of the PI's recorded publication titles, live, against OpenAlex --
-    with no cap, a PI with 80-90+ recorded papers (not unusual for a senior professor
-    with many grants) means 80-90+ live network calls just for them. Deduping repeated
-    titles (the same paper is often recorded once per completion report it appears in)
-    and capping at MAX_TITLES_PER_PI bounds the worst case. An earlier version of this
-    capped at 20 in RGC's own (arbitrary) list order -- found live to miss a real,
-    verifiable match for a prolific PI (Li Han-Xiong) whose confirming title sat at
-    position 77 of 84. Sorting by title length first (longer titles tend to be more
-    distinctive, so more likely to produce a clean, unambiguous OpenAlex match) and
-    raising the cap to 50 catches that case; this still reduces how much corroborating/
-    conflicting evidence is gathered for extremely prolific PIs, but never flips a
-    confirmed match into a wrong one (titles_match still verifies each one
-    individually)."""
     project_ids = split_ids(rows[0].get("rgc_project_ids", ""))
     titles = []
     for pid in project_ids:

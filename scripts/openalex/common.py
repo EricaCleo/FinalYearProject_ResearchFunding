@@ -1,12 +1,8 @@
 """
-Shared helpers for the RGC PI -> OpenAlex author-linkage pipeline (adapted from the
-supervisor's guide: RGC_to_OpenAlex_Author_Linkage_Guide.md).
+Shared helpers for the RGC PI -> OpenAlex author-linkage pipeline.
 
-OpenAlex is free and does not require an account or API key for normal use. Setting
-OPENALEX_MAILTO to your email is optional but recommended — OpenAlex gives faster,
-more reliable responses ("the polite pool") to requests that identify a contact. If
-your supervisor later provides an actual API key, set OPENALEX_API_KEY and it will be
-used automatically; it's optional, everything here works without one.
+OPENALEX_MAILTO (optional) gets faster responses from OpenAlex's "polite pool".
+OPENALEX_API_KEY (optional) is used automatically if set.
 """
 import json
 import os
@@ -52,9 +48,7 @@ INSTITUTION_ALIASES = {
     "eduhk": "Education University of Hong Kong",
 }
 
-# OpenAlex's own institution IDs for the 8 UGC-funded HK universities, keyed by the
-# same canonical names INSTITUTION_ALIASES normalizes to. Looked up directly via
-# OpenAlex (search_entities, entity_type=institutions) rather than guessed.
+# OpenAlex institution IDs for the 8 UGC-funded HK universities.
 INSTITUTION_OPENALEX_IDS = {
     "City University of Hong Kong": "I168719708",
     "University of Hong Kong": "I889458895",
@@ -68,10 +62,6 @@ INSTITUTION_OPENALEX_IDS = {
 
 
 def institution_openalex_id(institution_raw: str) -> str:
-    """Looks up the OpenAlex institution ID for an RGC-scraped institution string, via
-    the same name normalization already used for institution_match comparisons. Returns
-    "" if the institution isn't one of the 8 UGC-funded universities this project
-    covers (or wasn't scraped close enough to one of INSTITUTION_ALIASES' known forms)."""
     return INSTITUTION_OPENALEX_IDS.get(normalize_institution(institution_raw), "")
 
 
@@ -82,8 +72,7 @@ def normalize_unicode(value) -> str:
 
 
 def clean_person_name(name: str) -> str:
-    """Conservative name cleaning. Does not guess surname order unless the original
-    name contains a comma, e.g. 'CHAN, Tai Man'."""
+    # only flips to "given surname" order if there's a comma, e.g. "CHAN, Tai Man"
     name = normalize_unicode(name)
     name = ROLE_PATTERN.sub(" ", name)
     name = TITLE_PATTERN.sub(" ", name)
@@ -131,11 +120,8 @@ def short_openalex_id(value) -> str:
 
 
 def extract_titles(publications_raw: str) -> list[str]:
-    """RGC's `publications` field (rgc_awards.csv, from parse_details.py's completion-
-    report Research Output table) is a JSON-encoded list of {column_header: value}
-    dicts -- reads any key containing "title" rather than assuming one exact column
-    name, since the real header is usually "Title and Journal/Book" (a combined
-    citation string, not a pure title -- see auto_classify_publication_match.py)."""
+    # publications field is a JSON list of {column_header: value} dicts; grab
+    # whatever key has "title" in it since the real header varies
     if not publications_raw:
         return []
     try:
@@ -155,18 +141,11 @@ def extract_titles(publications_raw: str) -> list[str]:
     return titles
 
 
-_MIN_SECONDS_BETWEEN_REQUESTS = 0.3  # ~3.3 req/sec -- loosened from 0.15 (~6.5/sec) after hitting
-# real 429s even at the tighter pacing; OpenAlex's 10/sec cap is a ceiling the whole
-# pipeline should stay well under, not a target to approach
+_MIN_SECONDS_BETWEEN_REQUESTS = 0.3  # stay under OpenAlex's per-second rate limit
 _last_request_time = 0.0
 
 
 def _pace_requests():
-    """Scripts in this pipeline (search_candidates.py especially) fire several
-    OpenAlex requests back-to-back per PI with no delay between them -- bursts can
-    trip OpenAlex's rate limiter even while comfortably under its per-day cap, since
-    the limit is also enforced per-second. This keeps every call to openalex_get at
-    least _MIN_SECONDS_BETWEEN_REQUESTS apart, regardless of which script is calling."""
     global _last_request_time
     elapsed = time.monotonic() - _last_request_time
     if elapsed < _MIN_SECONDS_BETWEEN_REQUESTS:
@@ -181,13 +160,10 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
     if MAILTO:
         params["mailto"] = MAILTO
 
-    # OpenAlex's own docs ask for a descriptive User-Agent alongside mailto, and some
-    # requests with no User-Agent at all (the plain "python-requests/x.y" default) get
-    # flagged and blocked before request volume is even a factor -- seen in practice as
-    # a persistent 429 on literally the first request of a run, not a burst pattern.
+    # a missing User-Agent can get flagged/blocked by itself, so always send one
     headers = {
         "User-Agent": f"RGC-OpenAlex-linkage-pipeline (mailto:{MAILTO})" if MAILTO
-        else "RGC-OpenAlex-linkage-pipeline (no contact email set -- see OPENALEX_MAILTO in common.py)"
+        else "RGC-OpenAlex-linkage-pipeline"
     }
 
     url = f"{BASE_URL}/{endpoint.lstrip('/')}"
@@ -204,10 +180,6 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
             continue
 
         if response.status_code == 429:
-            # Include the response body -- OpenAlex's 429s distinguish a transient
-            # per-second limit from an exhausted daily budget (e.g. a prior
-            # "dailyRemainingUsd":0 response), and that distinction was previously
-            # being thrown away, making every 429 look identical and undebuggable.
             last_detail = f"HTTP 429 rate limited: {response.text[:300]}"
             print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
             time.sleep(min(2 ** attempt, 30) + 2)

@@ -1,61 +1,21 @@
 """
-Stage 7 of the automated PI matching pipeline: for PIs still tied after
-stages 1-6, compares RGC's OWN scraped `field` and `panel` columns (the
-subject area and broad discipline RGC itself recorded for the grant)
-against each tied candidate's OpenAlex-assigned topics. If exactly one
-candidate's topics share enough specific keywords with RGC's own stated
-field/panel, confirm it.
+Stage 7: compares RGC's own `field`/`panel` columns against each tied
+candidate's OpenAlex topics. Confirms if exactly one institution-matched
+candidate shares 2+ specific keywords with RGC's recorded subject area.
 
-This replaces an earlier version of this stage that used Semantic
-Scholar's API to pull a PI's real paper titles (as an automatable
-equivalent of manually checking Google Scholar) and compared THOSE
-against OpenAlex topics. That worked for the one case tested, but didn't
-actually use anything scraped from RGC at all -- both sides of the
-comparison were external data (Semantic Scholar, OpenAlex). That breaks
-this project's own rule that automated filtering should be grounded in
-data RGC itself provided, the same reasoning that got an earlier
-topic/work-count stage dropped entirely (auto_classify_topic_workcount.py,
-removed earlier in this project). This version fixes that: RGC's
-`field`/`panel` columns are the actual ground truth being checked against.
-A candidate's own OpenAlex topics are still used (there's no way around
-that -- it's the only per-candidate data available to compare), but they
-describe the candidate being evaluated, not an independent "truth" source
-standing in for RGC's.
+Needs rgc_awards.csv for field/panel by project_id.
 
-Requires a copy of rgc_awards.csv (output of combine_rgc_data.py) to look
-up each PI's field/panel by project_id.
+Known limitation: RGC's field/panel are broad discipline names while
+OpenAlex topics are narrow research niches, so exact-word overlap is weak
+and this stage won't resolve most remaining ties by itself.
 
-Known limitation, found while building this: RGC's `field`/`panel` values
-are broad discipline names ("Materials Science", "Engineering"), while a
-candidate's OpenAlex `candidate_topics` are narrow research niches
-("Metallic Glasses", "High Entropy Alloys"). Exact-word overlap between
-those two vocabularies is weak -- in practice the only shared word between
-an RGC field and either a correct or incorrect candidate's topics is often
-a generic term like "materials" itself, which doesn't distinguish anyone
-(both candidates can plausibly carry it). There's also no stemming, so
-"metallurgy" vs "metallurgical" won't match even when they name the same
-discipline.
-
-REAL BUG, found via manual spot-check (not just a theoretical risk): this
-stage was the only one in the entire pipeline (1-6 all require it) that
-never checked institution_match at all -- it only required ONE overlapping
-keyword, with no institution-match gate to catch a wrong candidate at all.
-Combined with the weak-keyword-vocabulary problem above, this produced
-real false positives in practice: a 5-row random spot-check against
-already-"confirmed" field_panel matches found 4 of 5 WRONG, every one of
-them a massive conflated OpenAlex profile (many different unrelated real
-people merged into one ID by OpenAlex, each with a huge inflated
-works_count) that shared one generic word ("mechanical", "medicine",
-"health") with RGC's field/panel and had ZERO actual connection to the
-PI's real institution. Fixed by (1) requiring institution_match == 1
-before a candidate counts at all, same baseline every other stage already
-enforces, and (2) raising the overlap requirement from 1 to 2 keywords as
-additional insurance, since a single generic word is still weak evidence
-even with institution confirmed. This stage stays SAFE in its *remaining*
-design (ambiguous or absent overlap still just declines rather than
-guesses), but expect it to confirm noticeably fewer PIs than before this
-fix -- most of its previous "confirmations" were the bug, not real
-matches.
+Bug fixed after a manual spot-check: this stage originally had no
+institution check at all (every other stage requires one) and confirmed
+on just 1 overlapping keyword. A 5-row sample of its output found 4 of 5
+wrong, all matched via one generic shared word to profiles with no real
+connection to the PI's institution. Now requires institution_match and 2+
+keywords, so it confirms noticeably fewer PIs than before -- most of the
+old confirmations were this bug, not real matches.
 
 Usage:
     python auto_classify_field_panel.py --input still_unresolved_stage6.csv \
@@ -68,10 +28,7 @@ import csv
 import re
 from collections import defaultdict
 
-# Generic words that would create false "overlap" between any two research fields.
-# "materials"/"engineering" are included because they're broad enough to appear in
-# almost any STEM candidate's topics regardless of their actual specific niche --
-# sharing just that word with RGC's field/panel isn't evidence of anything.
+# generic words broad enough to appear in almost any STEM candidate's topics
 STOPWORDS = {
     "and", "the", "of", "for", "in", "on", "with", "to", "a", "an", "based",
     "study", "studies", "analysis", "research", "method", "methods", "using",
@@ -106,16 +63,7 @@ def classify_pi(rows: list[dict], rgc_awards_by_id: dict[str, dict]) -> dict | N
     if not rgc_keywords:
         return None  # no RGC field/panel data to check against -- can't verify this way
 
-    # institution_match is required here -- same baseline every other stage in
-    # this pipeline already enforces. Its absence was a real bug (see module
-    # docstring): without it, a candidate with zero actual connection to the
-    # PI's institution could still get confirmed purely on a coincidental
-    # shared keyword, and in practice this is exactly what happened.
-    #
-    # Requires 2+ overlapping keywords (raised from 1) as additional insurance
-    # -- a single generic word is weak evidence even with institution now
-    # confirmed, and the spot-check false positives found live all matched on
-    # just one generic term ("mechanical", "medicine", "health").
+    # institution_match + 2 keywords required -- see module docstring for why
     matched = []
     for r in rows:
         if r.get("institution_match") != "1":

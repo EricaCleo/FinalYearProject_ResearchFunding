@@ -1,32 +1,17 @@
 """
-Cross-cutting sanity check for ALREADY-CONFIRMED matches across every stage
-(1-7), built after a manual spot-check caught a real false positive that
-none of the stages themselves could have caught: Stage 1 confirmed a PI
-purely on institution + exact name-token match, but the confirmed
-candidate's actual research area (computational drug discovery /
-bioinformatics) had nothing to do with the grant's real subject
-(electromagnetics / antenna engineering) -- a genuine name collision
-between two different real people who both happened to have some
-connection to the same institution.
+Checks already-confirmed matches (any stage) for topic overlap with RGC's
+own field/panel/project_title. Built after a manual spot-check found a
+confirmed PI whose candidate's real research area had nothing to do with
+the grant's subject -- a name collision stages 1-4 can't catch, since they
+never check topic at all.
 
-This does NOT add a new way to CONFIRM anything -- stages 1-4 never had
-any topical cross-check at all (by design: name+institution was treated as
-sufficient when unambiguous), and this doesn't change that. It only FLAGS
-an existing confirmation when the candidate's OpenAlex topics show
-essentially zero plausible connection to RGC's own recorded field/panel/
-project title, for a human to manually review. A flag is not proof of a
-wrong match (RGC's field/panel is broad, see auto_classify_field_panel.py's
-own documented low-yield limitation), but zero overlap at all across every
-RGC text signal available is a meaningful red flag worth a second look --
-cheap insurance against another Man-Hon-Wong-style name collision slipping
-through unnoticed.
+Only flags for review, never confirms anything new. A flag isn't proof of
+a wrong match (RGC's field/panel is broad), but zero overlap is worth a
+second look.
 
-Looks up each confirmed candidate's topics from the candidate-pool file(s)
-that produced them (author_candidates_pilot*.csv) by candidate_author_id --
-NOT a live OpenAlex re-fetch, so this is fast and free, but a candidate
-confirmed only via Stage 5's rescue path (a brand-new ID never in the
-original pool) won't have cached topics and is reported separately as
-"no topic data available" rather than silently skipped.
+Looks up topics from the candidate-pool CSV(s), not a live re-fetch, so
+it's fast. A Stage 5 rescue-path candidate (never in the pool) has no
+cached topics and is reported separately rather than silently skipped.
 
 Usage:
     python sanity_check_confirmed.py \

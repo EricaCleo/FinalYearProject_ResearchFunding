@@ -1,21 +1,14 @@
 """
 Combine all per-year RGC CSVs (output of scripts/rgc/to_csv.py) into one
-rgc_awards.csv formatted for the RGC -> OpenAlex PI linkage pipeline
-(see the supervisor's guide: RGC_to_OpenAlex_Author_Linkage_Guide.md).
+rgc_awards.csv for the RGC -> OpenAlex PI linkage pipeline.
 
 Usage:
     python combine_rgc_data.py --input-dir path/to/csvs --out rgc_awards.csv
 
-Each input file's award year is read from its filename (expects a 4-digit
-20xx year somewhere in the name, e.g. "2010_results.csv" or "parsed_2010.csv").
-This is used as `award_year` instead of the page's own "Exercise Year" field,
-since RGC's search is itself keyed on Award Year, and Exercise Year can
-genuinely differ from the year a project was actually awarded (confirmed
-earlier in the RGC collection work — a project searched under Award Year
-2006/07 showed Exercise Year 2010/11 on its own detail page).
-
-If the same project_id appears in more than one input file (e.g. a file
-uploaded twice by mistake), only the first occurrence is kept.
+award_year comes from the filename (expects a 4-digit year, e.g.
+"2010_results.csv"), not the page's own "Exercise Year" field, since those
+two can genuinely differ. Duplicate project_ids across files keep only the
+first occurrence.
 """
 import argparse
 import csv
@@ -25,18 +18,10 @@ from pathlib import Path
 OUTPUT_COLUMNS = [
     "project_id", "pi_name_raw", "institution_raw", "department_raw",
     "award_year", "project_title", "abstract", "panel", "scheme", "orcid",
-    # Extra columns beyond the guide's minimum recommended set — useful for
-    # the funding-size vs research-output analysis later, kept rather than
-    # discarded.
     "status", "amount", "end_date", "field", "exercise_year",
     "co_investigators", "publications", "conferences", "source_url",
-    # Completion-report free-text fields -- previously dropped here even though
-    # to_csv.py already carries them through from parse_details.py. Added for
-    # auto_classify_text_match.py's pooled keyword-overlap matching (see that
-    # script for real coverage figures: layman_summary ~76%, the other three
-    # ~48% each -- "other_impact" stays excluded at ~11%, too sparse to be
-    # worth it). "email" isn't usable for OpenAlex matching (OpenAlex has no
-    # author email field) but is kept for manual-review lookups.
+    # completion-report free-text fields, kept for manual review / analysis
+    # later -- email isn't usable for OpenAlex matching but helps lookups
     "email", "layman_summary", "realisation_of_objectives",
     "objectives_addressed", "major_findings", "potential_development",
 ]

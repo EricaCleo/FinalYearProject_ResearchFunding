@@ -1,29 +1,10 @@
 """
-Stage 2 of the automated PI matching pipeline: ORCID-presence filter.
+Stage 2: ORCID tiebreak. Among candidates that already passed stage 1
+(institution + exact name match), confirms if exactly one has an ORCID.
+ORCID presence is corroborating evidence of a real, established profile,
+not proof on its own -- it's only ever used on top of the stage 1 filter.
 
-Takes the PIs that stage 1 (auto_classify_institution.py) couldn't resolve
-(multiple candidates all matched the RGC institution) and applies a second
-rule: a real, well-established researcher usually has a populated ORCID,
-while duplicate/fragment OpenAlex profiles (split pieces of the same
-person's output that didn't get merged) usually don't -- confirmed directly
-in the CAI Wenlong pilot case, where the main 54-work profile had an ORCID
-and the two small stub profiles (2-9 works) did not.
-
-Per supervisor feedback: having an ORCID does not by itself mean a
-candidate is the correct match -- ORCID is supporting evidence, not a
-standalone decision. An earlier version of this script only required
-institution_match before using ORCID, WITHOUT requiring the candidate's
-name to be an exact match to the PI's name -- so a candidate with only a
-loose/fuzzy name match, the right institution, and an ORCID could have been
-auto-confirmed over the real person. Fixed: ORCID now only breaks a tie
-among candidates that already have an EXACT name-token match (same
-requirement as stage 3), so ORCID is always combined with name+institution
-evidence, never used alone.
-
-Rule per PI, among their institution-matched, exact-name-matched
-candidates only:
-  - exactly 1 candidate has a non-empty ORCID   -> auto "confirmed"
-  - 0 or 2+ candidates have an ORCID            -> still unresolved, needs stage 3
+Rule: exactly 1 candidate has an ORCID -> confirmed; 0 or 2+ -> stage 3.
 
 Usage:
     python auto_classify_orcid.py --input needs_stage2_filtering.csv \

@@ -1,34 +1,14 @@
 """
-Stage 1 of the automated (no manual review) PI matching pipeline, per
-supervisor instruction to replace one-by-one manual checking with a
-filtering system. The rule is name + institution + unique candidate, per
-supervisor's framing -- confirmed this way to validate accuracy before
-applying it to the full dataset.
+Stage 1: confirm a PI when exactly one candidate matches both the RGC
+institution and an exact name-token match (same words, order-independent).
 
-An earlier version of this script only checked institution_match, without
-also requiring an exact name-token match -- so a candidate whose name was
-only a loose/fuzzy match to the search query, but happened to be the only
-one at the right institution, could have been auto-confirmed. Fixed: now
-requires BOTH institution match AND an exact name-token match (same set of
-words, order-independent) before counting a candidate at all.
+Rule per PI:
+  - exactly 1 match -> confirmed
+  - 0 matches        -> not_found
+  - 2+ matches       -> needs_stage2 (next filter, e.g. ORCID)
 
-Rule per PI (grouped by pi_name_raw + rgc_institution):
-  - exactly 1 candidate has institution+exact-name match   -> auto "confirmed"
-  - 0 candidates have institution+exact-name match          -> auto "not_found"
-  - 2+ candidates have institution+exact-name match          -> "needs_stage2"
-    (name+institution alone can't resolve it -- goes to the next filter
-    stage, e.g. ORCID)
-
-This does NOT check affiliation timing (whether the candidate was at that
-institution during the award year specifically) -- it only checks whether
-the institution appears anywhere in the candidate's OpenAlex affiliation
-history. That's a coarser signal than the guide's original manual-review
-process used; add a timing-aware stage if too many false positives turn up.
-
-A "not_found" PI's full candidate rows are also written to --out-no-exact-match
-(not just the PI name + reason in --out-not-found), so a later stage can
-still search them with a looser name comparison (e.g. initials vs. spelled-
-out given names) without re-querying OpenAlex.
+Doesn't check affiliation timing, just whether the institution appears
+anywhere in the candidate's history.
 
 Usage:
     python auto_classify_institution.py --input author_candidates_pilot.csv \

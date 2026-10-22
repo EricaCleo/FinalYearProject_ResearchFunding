@@ -1,20 +1,12 @@
 """
-Step 1 of the OpenAlex matching pipeline: search OpenAlex for candidate author
-profiles for each RGC PI, and build the pilot review spreadsheet.
-
-This does NOT decide who the correct match is — it only gathers evidence (name
-similarity, institution match, topics, search rank) for a human to review. See
-RGC_to_OpenAlex_Author_Linkage_Guide.md sections 7-11 for how to use the evidence.
+Step 1: search OpenAlex for candidate author profiles for each RGC PI.
+Doesn't decide who's correct, just gathers evidence (name similarity,
+institution match, topics, search rank) for the next stages / manual review.
 
 Usage:
     python search_candidates.py --input unique_pis.csv --pilot-size 40 \
         --out-candidates author_candidates_pilot.csv \
         --out-review author_candidates_for_review.csv
-
-Input (unique_pis.csv) comes from combine_rgc_data.py's output, one row per unique
-(pi_name_raw, institution_raw) pair rather than one row per grant — the same person's
-multiple RGC grants are verified once, not once per grant (see the open question about
-this in the project's matching-decision discussion).
 """
 import argparse
 import csv
@@ -38,23 +30,12 @@ def search_authors_by_name(name: str, per_page: int = 10) -> list[dict]:
 
 
 def search_authors_by_name_at_institution(name: str, institution_id: str, per_page: int = 10) -> list[dict]:
-    """A plain name search only ever returns OpenAlex's top-K globally-relevant
-    results for that name -- for a common name, the correct person at the right
-    institution can rank below that cutoff and never appear at all, even though
-    institution_match() would have confirmed them immediately if they'd been in the
-    pool (found live: this happened for several real PIs with busy names). Searching
-    WITHIN the institution directly, rather than checking institution only after a
-    global name search, finds them regardless of their global name-relevance rank.
-
-    Filters on affiliations.institution.id (the author's FULL historical affiliation
-    record), not last_known_institutions.lineage (current institution only) -- an
-    earlier version of this used last_known_institutions and still missed several real
-    PIs, because last_known reflects where someone is affiliated NOW, and a PI whose
-    career has moved on since their RGC grant year (e.g. Li Ying, since moved to
-    Shanghai Jiao Tong/Fudan) is correctly excluded by that filter even though they
-    genuinely were at the right institution when the grant was awarded. Confirmed live:
-    switching to the full affiliations history surfaced Li Ying at rank 4 of 10, where
-    last_known_institutions found nothing at all."""
+    # a global name search only returns the top-K globally-relevant results, so a
+    # common name's correct candidate at the right institution can rank below that
+    # cutoff and never show up -- searching within the institution directly avoids this.
+    # Uses affiliations.institution.id (full career history) rather than
+    # last_known_institutions (current institution only), since a PI who's since
+    # moved elsewhere would otherwise be missed.
     data = openalex_get("authors", params={
         "search": name,
         "filter": f"affiliations.institution.id:{institution_id}",
@@ -79,11 +60,8 @@ def collect_author_candidates(pi_name_raw: str, institution_raw: str = "", per_v
     for query_name in generate_name_variants(pi_name_raw):
         add_results(search_authors_by_name(query_name, per_variant), query_name)
         if institution_id:
-            # Wider net than the global name search: this is scoped to ONE institution
-            # already, so a higher per_page costs nothing extra in API calls and
-            # specifically catches very common names (e.g. "Wei Wang" -- confirmed
-            # live to rank 40th of ~126 institution-scoped matches, well past a 10-item
-            # cutoff but comfortably inside 50).
+            # wider cap here since it's already scoped to one institution, so
+            # a higher per_page is free and helps with very common names
             add_results(search_authors_by_name_at_institution(query_name, institution_id, per_institution_variant),
                         query_name)
 
@@ -150,9 +128,7 @@ def main():
     parser.add_argument("--input", required=True, help="unique_pis.csv from combine_rgc_data.py")
     parser.add_argument("--pilot-size", type=int, default=40)
     parser.add_argument("--offset", type=int, default=0,
-                         help="Skip this many PIs before taking --pilot-size -- e.g. --offset 40 "
-                              "--pilot-size 40 runs PIs 41-80, a second pilot batch distinct from "
-                              "the default first-40 batch.")
+                         help="Skip this many PIs before taking --pilot-size, e.g. --offset 40 runs PIs 41-80")
     parser.add_argument("--out-candidates", default="author_candidates_pilot.csv")
     parser.add_argument("--out-review", default="author_candidates_for_review.csv")
     args = parser.parse_args()

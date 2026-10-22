@@ -1,42 +1,18 @@
 """
-Stage 4 of the automated PI matching pipeline: handles name-formatting gaps
-that exact name-token matching (stages 1-3) correctly declines to guess,
-found in the pilots:
+Stage 4: handles three name-formatting gaps exact matching misses.
 
-Pattern 1 -- initials vs. full given name. OpenAlex sometimes stores a
-middle/given name as initials instead of spelling it out, e.g.
-"Kannie W. Y. Chan" for RGC's "Kannie Wai Yan Chan", or "S.Y.R. Hui" for
-"Ron Shu-Yuen Hui". Handled by reducing every token except the surname (the
-last token, by this project's existing convention) to its first letter on
-BOTH sides before comparing -- "wai"/"yan" -> "w"/"y" matches "w"/"y" on the
-OpenAlex side directly.
+1. Initials vs. full given name, e.g. "Kannie W. Y. Chan" for RGC's
+   "Kannie Wai Yan Chan" -- reduce every token but the surname to its
+   first letter on both sides before comparing.
+2. Compound given-name splitting, e.g. "Wenxiong" vs. "Wen-Xiong" --
+   compare with all non-letter characters stripped, no tokenization.
+3. One extra given name on OpenAlex's side not recorded by RGC at all
+   (e.g. an added English name like "Rosa Ho Man Chan" for RGC's
+   "Ho-man Chan") -- requires every RGC name token to be present, capped
+   at exactly one extra token to avoid false-positiving on unrelated names.
 
-Pattern 2 -- compound given-name splitting. RGC may spell a given name as
-one word ("Wenxiong") while OpenAlex splits it into two ("Wen-Xiong").
-Handled by also comparing the two names with ALL non-letter characters
-stripped and no tokenization at all (so "wenxiong wang" and "wen-xiong
-wang" both become "wenxiongwang").
-
-Pattern 3 -- one extra given name on the OpenAlex side. Found live in the
-second pilot batch: RGC recorded "Ho-man Chan", but the only
-institution-matched candidate was "Rosa Ho Man Chan" -- a real, common HK
-academia pattern where someone publishes under an added English given name
-RGC's own record doesn't carry at all (not an initials difference, not a
-compound-name split -- a genuinely extra token). Handled by checking that
-ALL of the PI's name tokens are present in the candidate's name tokens
-(so the surname and every given-name token RGC recorded must still be
-there), tolerating EXACTLY ONE extra token on the candidate's side. Capped
-at exactly one extra token (not "any number") to keep this as narrow as
-patterns 1-2 -- a PI's name being a small subset of an unrelated, longer
-name is a real false-positive risk otherwise.
-
-A candidate counts as a match if ANY of the three comparisons succeeds.
-This is intentionally still strict: none of the patterns touch surname
-matching (which must still be present on both sides), and pattern 1 does
-not accept initials unless the number of remaining given-name tokens lines
-up. It is only applied to candidates institution-matched but left
-unresolved by stages 1-3 -- never loosens anything the stricter stages
-already decided.
+A candidate matches if any of the three succeed. Surname must still match
+on all of them; only applies to candidates still unresolved after stage 3.
 
 Usage:
     python auto_classify_name_variants.py --input not_found.csv --input2 still_unresolved.csv \
@@ -111,13 +87,7 @@ def classify_pi(rows: list[dict]) -> dict | None:
         }
 
     if len(matches) > 1:
-        # Same logic as stage 3: several name-variant matches can't be
-        # resolved by guessing, but if 2+ of them share the literal same
-        # ORCID, that's proof they're the same real person split across
-        # OpenAlex profiles -- retain all of them rather than leave a
-        # provably-resolvable case unresolved (found via "S.Y.R. Hui" and
-        # "S.Y. Ron Hui" both matching "Ron Shu-Yuen Hui" by initials, and
-        # sharing one ORCID between them).
+        # same as stage 3: a shared ORCID among the tied matches proves one identity
         orcid_counts = defaultdict(list)
         for r, _ in matches:
             orcid = r.get("candidate_orcid")

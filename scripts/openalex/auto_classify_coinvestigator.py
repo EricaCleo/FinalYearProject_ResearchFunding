@@ -1,25 +1,13 @@
 """
-Stage 6 of the automated PI matching pipeline: resolves PIs still tied after
-stages 1-5 by cross-referencing RGC's own `co_investigators` field (scraped
-per project, independent of anything OpenAlex itself asserts) against each
-tied candidate's REAL co-authors on OpenAlex.
+Stage 6: cross-references RGC's own `co_investigators` field against each
+tied candidate's real OpenAlex co-authors. If exactly one candidate's
+co-author list has an exact name match to one of the PI's real RGC
+co-investigators, that's independent corroboration -- confirm it.
 
-Rule: for each tied candidate, fetch their actual OpenAlex co-authors (from
-their own works). If exactly one candidate's co-author list contains an
-exact name-token match to one of the PI's real RGC co-investigators, that's
-strong independent corroboration -- confirm it. If zero or 2+ candidates
-show this overlap, stay unresolved (don't guess).
-
-Name comparison is intentionally strict (exact token-set match only, same
-as stages 1-3) -- this stage is corroborating evidence from a second
-independent source, not a place to loosen matching rules.
-
-Requires a copy of rgc_awards.csv (output of combine_rgc_data.py) to look up
-each PI's co_investigators by project_id -- that field is RGC's own
-free-text list of co-investigator names (not sourced from OpenAlex at all).
-Confirmed from real scraped data that entries are concatenated as
-"<Title> Surname, Given" with no delimiter between people other than the
-next title keyword (see extract_coinvestigator_names below).
+Needs rgc_awards.csv for the co_investigators field by project_id. That
+field concatenates entries as "<Title> Surname, Given" with no delimiter
+between people other than the next title keyword -- see
+extract_coinvestigator_names below.
 
 Usage:
     python auto_classify_coinvestigator.py --input still_unresolved_stage5.csv \
@@ -34,15 +22,9 @@ from collections import defaultdict
 
 from common import clean_person_name, openalex_get
 
-# A new co-investigator entry starts at each title keyword (Prof/Dr/Mr/...).
-# Confirmed from real scraped RGC data that co_investigators concatenates
-# "<Title> Surname, Given" entries with just a space and NO comma, semicolon,
-# or "and" between people at all, e.g.:
-#   "Prof Kwan, Kin Ming Prof Tin, Chung"
-#   "Prof LEUNG, Kwok Hi, Michael Prof SUN, Yongjun"
-#   "Dr CHONG, Alice Prof COOPER, Cary Prof OLOMOLAIYE, Paul"
-# Comma can't be the inter-person delimiter since it's already used WITHIN each
-# name for "Surname, Given" (and sometimes "Surname, Given1, Given2").
+# co_investigators has no delimiter between people other than the next title
+# keyword, e.g. "Prof Kwan, Kin Ming Prof Tin, Chung" -- comma can't be the
+# delimiter since it's already used within each name ("Surname, Given")
 TITLE_SPLIT_PATTERN = re.compile(
     r"(?=\b(?:professor|prof|doctor|dr|mr|mrs|ms|miss)\.?\s)",
     flags=re.IGNORECASE,

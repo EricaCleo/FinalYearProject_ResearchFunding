@@ -1,39 +1,17 @@
 """
 Manual-review helper: for one PI, ranks their candidate OpenAlex profiles by
-how much each candidate's OpenAlex topics overlap with that PI's grant text
-(RGC's own project_title/abstract/layman_summary/completion-report fields),
-plus (if sentence-transformers is installed) a semantic similarity score.
+how much their topics overlap with that PI's grant text, plus (if
+sentence-transformers is installed) a semantic similarity score.
 
-This does NOT auto-confirm anything -- it's a read-only diagnostic to support
-manual review, printing a ranked comparison for a human to read and judge.
-An earlier attempt (auto_classify_text_match.py, Stage 8) tried to use the
-keyword-overlap idea to auto-decide matches and was dropped after real bugs
-turned up live: it confirmed only when exactly one candidate cleared a
-threshold (not whoever had the MOST overlap), so two topically-similar
-candidates both clearing the bar silently killed a real match, and generic
-engineering/CS terms inflated unrelated candidates' scores. None of that
-matters here, since this script never decides anything -- it just ranks and
-shows the evidence, including for genuinely unresolvable cases (e.g.
-suspected-but-unprovable OpenAlex profile fragmentation, where there's no
-ORCID available to prove several thin profiles are the same real person, but
-topic overlap across all of them can still support that read for a written-up
-manual decision).
+Read-only -- never auto-confirms anything, just prints a ranked comparison
+for a human to judge. Keyword overlap alone only catches literal shared
+words ("fault detection" vs "anomaly diagnosis" scores 0 even though
+they're the same topic); the semantic score embeds both sides and compares
+by meaning instead, so results are sorted by it when available.
 
-Keyword overlap only catches LITERAL shared words -- "fault detection" vs
-"anomaly diagnosis" scores 0 even though they're the same real topic. The
-semantic score instead embeds the RGC text and each candidate's topics with
-a small pretrained sentence model and compares them by meaning, catching
-paraphrases/synonyms that keyword overlap can't. It's the richer signal, so
-results are sorted by it when available, with keyword overlap shown as a
-second column (still useful since an exact shared technical term, e.g. a
-specific method name, is strong independent evidence a general-purpose
-embedding model doesn't know is important).
-
-Requires `pip install sentence-transformers` for the semantic score -- falls
-back to keyword-overlap-only ranking (with a one-time notice) if that's not
-installed, since it's a sizeable optional dependency (one-time ~80MB model
-download, cached locally after first use) not needed for the basic use of
-this script.
+Needs `pip install sentence-transformers` for the semantic score (~80MB
+model download, cached after first use) -- falls back to keyword-only
+ranking if not installed.
 
 Usage:
     python inspect_candidates.py --pi "Prof Tan, Siew Chong" \
@@ -55,8 +33,6 @@ TEXT_FIELDS = [
     "objectives_addressed", "major_findings", "potential_development",
 ]
 
-# Same stopword list as the dropped Stage 8, kept here since it's still useful
-# for ranking even without an auto-decision threshold riding on it.
 STOPWORDS = {
     "and", "the", "of", "for", "in", "on", "with", "to", "a", "an", "based",
     "study", "studies", "analysis", "research", "method", "methods", "using",
@@ -93,10 +69,7 @@ def topic_keywords(text: str) -> frozenset[str]:
 
 
 def load_embedding_model():
-    """Returns a loaded sentence-transformers model, or None if the package
-    isn't installed. A small general-purpose model (~80MB, downloaded once
-    and cached by the library in ~/.cache) -- good enough to catch paraphrase/
-    synonym similarity without needing a GPU or an API key."""
+    # returns a loaded model, or None if sentence-transformers isn't installed
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:

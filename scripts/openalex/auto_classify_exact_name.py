@@ -1,61 +1,17 @@
 """
-Stage 3 (final stage) of the automated PI matching pipeline: exact
-name-token match + works_count filter.
+Stage 3: exact name-token match, with a shared-ORCID tiebreak for
+fragmented profiles. Fuzzy name similarity and topic overlap were both
+tried and dropped here -- fuzzy similarity let clearly wrong candidates
+score as high as real matches, and topic overlap leans on OpenAlex's own
+labels rather than RGC data.
 
-Stages 1-2 (institution, ORCID) can leave several candidates tied. An
-earlier version of this pipeline broke ties with fuzzy name_similarity
-(rapidfuzz ratio) and, separately, a topic-keyword-overlap check -- both
-were dropped. Fuzzy similarity was tested against the pilot data and found
-unreliable: clearly wrong candidates ("Yu Liu" vs "Qiang Liu", "Zhanhu Guo"
-vs "Zaiping Guo", "Xing Hua Zheng" vs "Xing Zheng") scored as high as real
-matches, because OpenAlex's own alternate-name data is noisy -- no
-threshold separates real from false. Topic overlap was dropped because it
-leans on an OpenAlex-generated label (the candidate's topics), not
-anything scraped from RGC, so it added opinion without adding reliable
-evidence once name matching was already exact.
-
-This stage uses an EXACT match instead: the candidate's name, tokenized
-and lowercased, must be the exact same SET of words as the PI's cleaned
-name (order-independent, so "Hong Yan" matches "Yan Hong"), not just
-similar. This had zero false positives across the full 40-PI pilot.
-
-When 2+ candidates are left tied on exact name + institution, works_count
-only tells you who's more PROLIFIC, not who's CORRECT -- it's only valid
-evidence once we have PROOF the tied candidates are fragments of one real
-person, not a guess. The only such proof available is 2+ candidates sharing
-the literal SAME non-empty ORCID (self-registered per human, so identical
-ORCID guarantees identical person). An earlier version of this script
-treated "no conflicting ORCIDs" as safe, which wrongly included cases where
-nobody had an ORCID at all, or only one candidate did -- that's missing
-information, not proof of a single identity, and is a materially weaker
-(and incorrect) standard. Now works_count only breaks a tie WITHIN a group
-of candidates proven identical by a shared ORCID; everything else --
-including "nobody has an ORCID" -- is left unresolved rather than guessed.
-
-Per supervisor feedback: when 2+ candidates share a proven identity (same
-ORCID), don't pick only the highest-works_count one and discard the rest --
-retain ALL of them. They're genuinely the same real person, so their
-publication records will need to be combined later (deduped by OpenAlex
-Work ID) rather than losing whatever the discarded profiles hold. This
-script now outputs every ID in a proven group, not just the "winner."
-
-Rule per PI, among institution-matched candidates with an exact name-token
-match:
-  - exactly 1 exact-name candidate                 -> auto "confirmed",
-                                                        1 OpenAlex ID
-  - 2+ candidates share one ORCID (proven identity) -> auto "confirmed",
-                                                        ALL IDs in that
-                                                        proven group kept
-                                                        (pipe-separated)
-  - no such proven-identity group exists            -> still unresolved
-                                                        (including when no
-                                                        candidate has an
-                                                        ORCID at all)
-  - 0 exact-name candidates                         -> still unresolved (e.g.
-                                                        the PI's real
-                                                        OpenAlex name is
-                                                        abbreviated to
-                                                        initials)
+Rule, among institution-matched candidates with an exact name-token match:
+  - exactly 1 candidate       -> confirmed
+  - 2+ share the same ORCID   -> confirmed, all IDs kept (proof of one
+                                   person split across OpenAlex profiles;
+                                   works_count only breaks ties within such
+                                   a proven group, never used alone)
+  - otherwise                 -> still unresolved
 
 Usage:
     python auto_classify_exact_name.py --input needs_stage3_filtering.csv \

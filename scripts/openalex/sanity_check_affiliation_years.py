@@ -1,27 +1,17 @@
 """
-Second sanity check for ALREADY-CONFIRMED matches, complementing
-sanity_check_confirmed.py's topic-overlap check with a harder, non-fuzzy
-signal: was this candidate actually affiliated with the PI's institution
-during (or reasonably near) the grant's real award year(s)?
+Second sanity check for already-confirmed matches: was this candidate
+actually affiliated with the PI's institution during the grant's real
+award year(s)? Complements sanity_check_confirmed.py's topic check with a
+harder, non-fuzzy signal -- affiliation years are a recorded fact, not a
+keyword-overlap judgment call.
 
-Built after the Man-Hon Wong false positive (see auto_classify_institution.py
-and README's Stage 1 section): that candidate DID have City University of
-Hong Kong somewhere in his OpenAlex affiliation history -- but only for
-2012-2014, a brief stint unrelated to the grant's actual award years.
-institution_match only checks "did this institution ever appear", never
-"was it there at the right TIME" -- so a decades-spanning career with one
-short, coincidental stay at the right institution is indistinguishable from
-a genuine long-term appointment there, as far as every stage in this
-pipeline is concerned. This check closes that gap.
+Built after a case where the confirmed candidate DID have the right
+institution in their history, but only for a brief period years before the
+grant was even awarded -- institution_match only checks "did this
+institution ever appear", not "was it there at the right time".
 
-Unlike the topic-overlap check, this is NOT fuzzy text matching -- a
-candidate's recorded affiliation years are a hard fact from OpenAlex's own
-data, not a keyword-overlap judgment call. A mismatch here is much stronger
-evidence of a real problem than a topic-overlap flag is.
-
-Requires live OpenAlex lookups (one request per confirmed PI's candidate
-ID(s)) since affiliation years aren't cached in author_candidates_pilot*.csv
--- budget accordingly for a large confirmed set.
+Does a live OpenAlex lookup per confirmed PI (affiliation years aren't
+cached anywhere), so budget time/quota for a large confirmed set.
 
 Usage:
     python sanity_check_affiliation_years.py \
@@ -45,9 +35,8 @@ def split_ids(value: str) -> list[str]:
 
 
 def get_affiliation_years(author_id: str, rgc_institution_id: str) -> list[int]:
-    """Live-fetches the author's record and returns every year they were
-    affiliated with rgc_institution_id specifically, from OpenAlex's own
-    `affiliations` field (each entry: {institution, years: [...]})."""
+    # fetch years this author was affiliated with the given institution,
+    # from OpenAlex's `affiliations` field: [{institution, years: [...]}]
     data = openalex_get(f"authors/{author_id}")
     years = []
     for affiliation in data.get("affiliations") or []:
@@ -71,8 +60,6 @@ def main():
 
     with open(args.rgc_awards, encoding="utf-8-sig") as f:
         rgc_by_id = {row["project_id"]: row for row in csv.DictReader(f)}
-        # institution_openalex_id looks up by normalized name -- reuse rgc_awards.csv's own
-        # institution_raw per project rather than re-deriving it, since every project row already has it.
 
     from common import institution_openalex_id
 
