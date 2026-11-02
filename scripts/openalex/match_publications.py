@@ -233,9 +233,11 @@ def main():
         parser.error(f"--batch-index must be between 0 and {args.batch_count - 1}")
 
     with open(args.rgc_awards, encoding="utf-8-sig") as f:
-        rows = [r for r in csv.DictReader(f) if r.get("publications", "").strip()]
+        rows = list(csv.DictReader(f))
 
-    print(f"{len(rows)} projects have non-empty publications")
+    with_pubs = sum(1 for r in rows if parse_publication_entries(r.get("publications", "")))
+    print(f"{len(rows)} projects total, {with_pubs} with reported publications "
+          f"({len(rows) - with_pubs} with none -- kept in the output, flagged, not dropped)")
 
     if args.sample:
         random.seed(args.seed)
@@ -262,10 +264,25 @@ def main():
 
     try:
         for i, project in enumerate(rows, start=1):
-            entries = parse_publication_entries(project["publications"])
+            entries = [e for e in parse_publication_entries(project["publications"]) if isinstance(e, dict)]
+
+            if not entries:
+                # not dropped -- flagged for a later stage that matches the PI
+                # directly to an OpenAlex Author and pulls their publications
+                row = {col: "" for col in OUTPUT_COLUMNS}
+                row.update({
+                    "project_id": project["project_id"], "pi_name_raw": project.get("pi_name_raw", ""),
+                    "match_method": "no_publications_reported", "flag": "no_publications_reported",
+                })
+                writer.writerow(row)
+                out_file.flush()
+                total_rows += 1
+                flag_counts[row["flag"]] = flag_counts.get(row["flag"], 0) + 1
+                if i % 10 == 0:
+                    print(f"  ...{i}/{len(rows)} projects processed, {total_rows} publications matched so far")
+                continue
+
             for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
                 match = match_one_publication(entry, project.get("pi_name_raw", ""))
                 match["project_id"] = project["project_id"]
                 match["pi_name_raw"] = project.get("pi_name_raw", "")
