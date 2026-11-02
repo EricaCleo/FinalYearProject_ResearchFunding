@@ -221,7 +221,16 @@ def main():
     parser.add_argument("--out", default="publication_matches.csv")
     parser.add_argument("--sample", type=int, default=0, help="Random sample of N projects (0 = full dataset)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--batch-count", type=int, default=0,
+                         help="Split the sample into this many equal, non-overlapping chunks "
+                              "(e.g. 3 so three people can each run their own third in parallel "
+                              "on their own API key/budget, with no duplicate work).")
+    parser.add_argument("--batch-index", type=int, default=0,
+                         help="Which chunk to run (0-based). Requires --batch-count.")
     args = parser.parse_args()
+
+    if args.batch_count and not (0 <= args.batch_index < args.batch_count):
+        parser.error(f"--batch-index must be between 0 and {args.batch_count - 1}")
 
     with open(args.rgc_awards, encoding="utf-8-sig") as f:
         rows = [r for r in csv.DictReader(f) if r.get("publications", "").strip()]
@@ -232,6 +241,15 @@ def main():
         random.seed(args.seed)
         rows = random.sample(rows, min(args.sample, len(rows)))
         print(f"Sampled {len(rows)} projects (seed={args.seed})")
+
+    if args.batch_count:
+        # same seed -> everyone samples the identical 100 before slicing, so
+        # the three chunks are guaranteed non-overlapping and cover it exactly
+        chunk_size = -(-len(rows) // args.batch_count)  # ceil division
+        start = args.batch_index * chunk_size
+        rows = rows[start:start + chunk_size]
+        print(f"Running batch {args.batch_index + 1}/{args.batch_count}: "
+              f"{len(rows)} projects (rows {start}-{start + len(rows) - 1} of the sample)")
 
     # Written one row at a time (and flushed) rather than held in memory and
     # saved at the end -- a budget cutoff or Ctrl+C partway through still
