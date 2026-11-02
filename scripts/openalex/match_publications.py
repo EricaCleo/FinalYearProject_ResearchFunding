@@ -115,6 +115,10 @@ def search_by_title(title: str, per_page: int = 3) -> tuple[list[dict], str]:
         # scraped author/title text sometimes carries one as a corresponding-author
         # marker, which OpenAlex then rejects outright (400) rather than ignoring.
         candidate = candidate.replace("*", " ")
+        # "," separates filter clauses in OpenAlex's own filter mini-language, even
+        # inside one filter's value -- "...Volume: 111,Issue: 2..." gets read as
+        # "end this filter, start a new one named Issue", which isn't a real field.
+        candidate = candidate.replace(",", " ")
         candidate = re.sub(r"\s+", " ", candidate).strip()
         if len(candidate) < 3:
             continue
