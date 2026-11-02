@@ -12,6 +12,10 @@ import unicodedata
 
 import requests
 
+class BudgetExhausted(RuntimeError):
+    """The daily OpenAlex budget is at $0 -- retrying won't help until the reset."""
+
+
 BASE_URL = "https://api.openalex.org"
 API_KEY = os.getenv("OPENALEX_API_KEY")  # optional
 MAILTO = os.getenv("OPENALEX_MAILTO")  # optional but recommended, e.g. export OPENALEX_MAILTO="you@example.com"
@@ -180,6 +184,16 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
             continue
 
         if response.status_code == 429:
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            # a zero daily budget won't recover until the stated reset time --
+            # retrying just burns the rest of the run uselessly until then
+            if body.get("dailyRemainingUsd") == 0 and body.get("prepaidRemainingUsd", 0) == 0:
+                retry_after = body.get("retryAfter")
+                when = f" (resets in ~{retry_after // 3600}h {(retry_after % 3600) // 60}m)" if retry_after else ""
+                raise BudgetExhausted(f"OpenAlex daily budget exhausted{when}: {response.text[:300]}")
             last_detail = f"HTTP 429 rate limited: {response.text[:300]}"
             print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
             time.sleep(min(2 ** attempt, 30) + 2)

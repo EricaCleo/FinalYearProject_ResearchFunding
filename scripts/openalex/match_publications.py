@@ -19,7 +19,7 @@ import random
 import re
 from difflib import SequenceMatcher
 
-from common import clean_person_name, openalex_get
+from common import BudgetExhausted, clean_person_name, openalex_get
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\"'<>\\]+")
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
@@ -86,6 +86,8 @@ def extract_authors(author_text: str) -> list[str]:
 def lookup_by_doi(doi: str) -> dict | None:
     try:
         return openalex_get(f"works/doi:{doi}")
+    except BudgetExhausted:
+        raise
     except RuntimeError:
         return None
 
@@ -152,7 +154,13 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
     row["doi_extracted"] = doi
 
     if doi:
-        work = lookup_by_doi(doi)
+        try:
+            work = lookup_by_doi(doi)
+        except BudgetExhausted as exc:
+            row["match_method"] = "doi_failed"
+            row["flag"] = "review_budget_exhausted"
+            print(f"    budget exhausted on DOI lookup {doi}: {exc}")
+            return row
         if work is None:
             row["match_method"] = "doi_failed"
             row["flag"] = "review_doi_not_found"
@@ -171,6 +179,11 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
 
     try:
         candidates = search_by_title(raw_title)
+    except BudgetExhausted as exc:
+        row["match_method"] = "title_search_failed"
+        row["flag"] = "review_budget_exhausted"
+        print(f"    budget exhausted on title search: {exc}")
+        return row
     except RuntimeError as exc:
         row["match_method"] = "title_search_failed"
         row["flag"] = "review_search_error"
@@ -220,31 +233,43 @@ def main():
         rows = random.sample(rows, min(args.sample, len(rows)))
         print(f"Sampled {len(rows)} projects (seed={args.seed})")
 
-    out_rows = []
+    # Written one row at a time (and flushed) rather than held in memory and
+    # saved at the end -- a budget cutoff or Ctrl+C partway through still
+    # leaves every row matched so far safely on disk.
     flag_counts = {}
-    for i, project in enumerate(rows, start=1):
-        entries = parse_publication_entries(project["publications"])
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            match = match_one_publication(entry, project.get("pi_name_raw", ""))
-            match["project_id"] = project["project_id"]
-            match["pi_name_raw"] = project.get("pi_name_raw", "")
-            out_rows.append(match)
-            flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
-        if i % 10 == 0:
-            print(f"  ...{i}/{len(rows)} projects processed, {len(out_rows)} publications matched so far")
+    total_rows = 0
+    out_file = open(args.out, "w", encoding="utf-8-sig", newline="")
+    writer = csv.DictWriter(out_file, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
 
-    with open(args.out, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(out_rows)
+    try:
+        for i, project in enumerate(rows, start=1):
+            entries = parse_publication_entries(project["publications"])
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                match = match_one_publication(entry, project.get("pi_name_raw", ""))
+                match["project_id"] = project["project_id"]
+                match["pi_name_raw"] = project.get("pi_name_raw", "")
+                writer.writerow(match)
+                out_file.flush()
+                total_rows += 1
+                flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
+            if i % 10 == 0:
+                print(f"  ...{i}/{len(rows)} projects processed, {total_rows} publications matched so far")
+    except KeyboardInterrupt:
+        print(f"\nInterrupted -- {total_rows} rows already saved to {args.out}, safe to re-run later")
+    finally:
+        out_file.close()
 
-    print(f"\nWrote {len(out_rows)} publication match rows -> {args.out}")
+    print(f"\nWrote {total_rows} publication match rows -> {args.out}")
     print("Flag breakdown:")
     for flag, count in sorted(flag_counts.items(), key=lambda kv: -kv[1]):
-        pct = 100 * count / len(out_rows) if out_rows else 0
+        pct = 100 * count / total_rows if total_rows else 0
         print(f"  {flag}: {count} ({pct:.1f}%)")
+    if flag_counts.get("review_budget_exhausted"):
+        print(f"\n{flag_counts['review_budget_exhausted']} rows hit the daily budget limit -- "
+              f"re-run once it resets (midnight UTC) to fill those in, no need to redo the rest")
 
 
 if __name__ == "__main__":
