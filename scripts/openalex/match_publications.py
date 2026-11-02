@@ -227,10 +227,19 @@ def main():
                               "on their own API key/budget, with no duplicate work).")
     parser.add_argument("--batch-index", type=int, default=0,
                          help="Which chunk to run (0-based). Requires --batch-count.")
+    parser.add_argument("--offset", type=int, default=0,
+                         help="Skip this many projects into the sample before starting -- for "
+                              "uneven splits across people (e.g. 40/30/30) that --batch-count "
+                              "can't do, since it only cuts equal-sized chunks.")
+    parser.add_argument("--limit", type=int, default=0,
+                         help="Process at most this many projects after --offset. Requires --offset's "
+                              "counterpart on this call to define the slice; 0 = everything from --offset on.")
     args = parser.parse_args()
 
     if args.batch_count and not (0 <= args.batch_index < args.batch_count):
         parser.error(f"--batch-index must be between 0 and {args.batch_count - 1}")
+    if args.batch_count and (args.offset or args.limit):
+        parser.error("use either --batch-count/--batch-index or --offset/--limit, not both")
 
     with open(args.rgc_awards, encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -243,6 +252,14 @@ def main():
         random.seed(args.seed)
         rows = random.sample(rows, min(args.sample, len(rows)))
         print(f"Sampled {len(rows)} projects (seed={args.seed})")
+
+    if args.offset or args.limit:
+        # same seed -> everyone samples the identical 100 before slicing, so
+        # agreed-upon, non-overlapping offset/limit ranges (e.g. 0-40, 40-70,
+        # 70-100) cover it exactly with no gaps or duplicates
+        end = args.offset + args.limit if args.limit else len(rows)
+        rows = rows[args.offset:end]
+        print(f"Running rows {args.offset}-{args.offset + len(rows) - 1} of the sample ({len(rows)} projects)")
 
     if args.batch_count:
         # same seed -> everyone samples the identical 100 before slicing, so
