@@ -1,0 +1,238 @@
+"""
+Grant -> Publication -> OpenAlex Work matching.
+
+For each publication listed under a grant's `publications` field: extract a
+DOI if the raw text has one and resolve it directly; otherwise search
+OpenAlex by title. Either way, the match is cross-checked before being
+trusted -- a resolved DOI whose OpenAlex title doesn't actually match the
+raw citation is flagged, not accepted blindly, and a title-search match is
+corroborated against publication year and author name.
+
+Usage:
+    python match_publications.py --rgc-awards rgc_awards.csv --out publication_matches.csv --sample 100
+    python match_publications.py --rgc-awards rgc_awards.csv --out publication_matches.csv   # full dataset
+"""
+import argparse
+import csv
+import json
+import random
+import re
+from difflib import SequenceMatcher
+
+from common import clean_person_name, openalex_get
+
+DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\"'<>\\]+")
+YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+YEAR_TOLERANCE = 1  # print year vs online-first year can differ by a year
+
+OUTPUT_COLUMNS = [
+    "project_id", "pi_name_raw", "raw_title", "raw_year", "raw_authors",
+    "doi_extracted", "match_method", "matched_work_id", "matched_title",
+    "matched_year", "title_similarity", "year_match", "author_match", "flag",
+]
+
+
+def normalize_title(title: str) -> str:
+    title = (title or "").lower()
+    title = re.sub(r"[^a-z0-9 ]+", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def title_similarity(a: str, b: str) -> float:
+    a, b = normalize_title(a), normalize_title(b)
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def extract_doi(text: str) -> str:
+    m = DOI_PATTERN.search(text or "")
+    if not m:
+        return ""
+    return m.group(0).rstrip(".,;:\"')")
+
+
+def parse_publication_entries(publications_raw: str) -> list[dict]:
+    if not publications_raw:
+        return []
+    try:
+        entries = json.loads(publications_raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return entries if isinstance(entries, list) else []
+
+
+def field_like(entry: dict, substring: str) -> str:
+    # RGC's own column headers for this JSON blob are inconsistently spaced/
+    # cased ("Title and Journal/Book" vs "Titleand Journal/Book"), so match
+    # loosely by substring rather than an exact key.
+    for key, value in entry.items():
+        if substring in key.lower().replace(" ", ""):
+            return (value or "").strip()
+    return ""
+
+
+def extract_authors(author_text: str) -> list[str]:
+    # "LU, Z G, CHEN, H L, ..." / "Lee, Joanna Wai Ying ; Ng, Mee Kam ; Tang, Wing Shing*"
+    parts = re.split(r"[;,]", author_text or "")
+    surnames = []
+    for part in parts:
+        part = re.sub(r"[*†‡]", "", part).strip()
+        if len(part) >= 2 and part.isupper() or (part and part[0].isupper() and part.isalpha()):
+            surnames.append(part.lower())
+    return surnames
+
+
+def lookup_by_doi(doi: str) -> dict | None:
+    try:
+        return openalex_get(f"works/doi:{doi}")
+    except RuntimeError:
+        return None
+
+
+_SHRINK_FRACTIONS = (1.0, 0.8, 0.6, 0.45, 0.3)
+
+
+def search_by_title(title: str, per_page: int = 3) -> list[dict]:
+    # The raw "title" field from RGC is really "title + journal + volume/pages"
+    # all run together, and OpenAlex's title search ANDs every word together --
+    # one stray journal-name or page-number token is enough to return zero
+    # results. Shrink from the full string down to just a leading fraction of
+    # its words until something matches; this finds roughly where the real
+    # title ends without having to parse the citation format, which varies.
+    words = title.split()
+    if not words:
+        return []
+    for fraction in _SHRINK_FRACTIONS:
+        n = max(4, round(len(words) * fraction))
+        candidate = " ".join(words[:n]).strip(" ,.;:-")
+        data = openalex_get("works", {
+            "filter": f"title.search:{candidate}",
+            "sort": "relevance_score:desc",
+            "per_page": per_page,
+        })
+        results = data.get("results", [])
+        if results:
+            return results
+    return []
+
+
+def work_author_surnames(work: dict) -> list[str]:
+    names = []
+    for a in work.get("authorships", []):
+        name = (a.get("author") or {}).get("display_name", "")
+        if name:
+            names.append(name.split()[-1].lower())
+    return names
+
+
+def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
+    raw_title = field_like(entry, "title")
+    raw_year_text = field_like(entry, "yearofpublication") or field_like(entry, "year")
+    raw_year_match = YEAR_PATTERN.search(raw_year_text)
+    raw_year = raw_year_match.group(0) if raw_year_match else ""
+    raw_authors_text = field_like(entry, "author")
+    raw_authors = extract_authors(raw_authors_text) or extract_authors(clean_person_name(pi_name_raw))
+
+    row = {
+        "raw_title": raw_title, "raw_year": raw_year, "raw_authors": "|".join(raw_authors),
+        "doi_extracted": "", "match_method": "no_match", "matched_work_id": "",
+        "matched_title": "", "matched_year": "", "title_similarity": "",
+        "year_match": "", "author_match": "", "flag": "no_doi_no_title",
+    }
+
+    doi = extract_doi(raw_title) or extract_doi(json.dumps(entry))
+    row["doi_extracted"] = doi
+
+    if doi:
+        work = lookup_by_doi(doi)
+        if work is None:
+            row["match_method"] = "doi_failed"
+            row["flag"] = "review_doi_not_found"
+            return row
+        sim = title_similarity(raw_title, work.get("title", ""))
+        row.update({
+            "match_method": "doi", "matched_work_id": work.get("id", ""),
+            "matched_title": work.get("title", ""), "matched_year": work.get("publication_year", ""),
+            "title_similarity": round(sim, 3),
+        })
+        row["flag"] = "ok" if sim >= 0.6 else "review_title_mismatch"
+        return row
+
+    if not raw_title:
+        return row
+
+    candidates = search_by_title(raw_title)
+    if not candidates:
+        row["match_method"] = "title_search"
+        row["flag"] = "review_no_candidates"
+        return row
+
+    top = candidates[0]
+    sim = title_similarity(raw_title, top.get("title", ""))
+    year_match = bool(raw_year) and abs(int(top.get("publication_year") or 0) - int(raw_year)) <= YEAR_TOLERANCE
+    cand_authors = work_author_surnames(top)
+    author_match = bool(raw_authors) and any(a in cand_authors for a in raw_authors)
+
+    row.update({
+        "match_method": "title_search", "matched_work_id": top.get("id", ""),
+        "matched_title": top.get("title", ""), "matched_year": top.get("publication_year", ""),
+        "title_similarity": round(sim, 3), "year_match": year_match, "author_match": author_match,
+    })
+
+    if sim >= 0.85 and (year_match or author_match):
+        row["flag"] = "ok"
+    elif sim >= 0.85:
+        row["flag"] = "review_no_corroboration"  # title looks right but year/author don't back it up
+    else:
+        row["flag"] = "review_low_similarity"
+    return row
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rgc-awards", required=True, help="rgc_awards.csv from combine_rgc_data.py")
+    parser.add_argument("--out", default="publication_matches.csv")
+    parser.add_argument("--sample", type=int, default=0, help="Random sample of N projects (0 = full dataset)")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    with open(args.rgc_awards, encoding="utf-8-sig") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("publications", "").strip()]
+
+    print(f"{len(rows)} projects have non-empty publications")
+
+    if args.sample:
+        random.seed(args.seed)
+        rows = random.sample(rows, min(args.sample, len(rows)))
+        print(f"Sampled {len(rows)} projects (seed={args.seed})")
+
+    out_rows = []
+    flag_counts = {}
+    for i, project in enumerate(rows, start=1):
+        entries = parse_publication_entries(project["publications"])
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            match = match_one_publication(entry, project.get("pi_name_raw", ""))
+            match["project_id"] = project["project_id"]
+            match["pi_name_raw"] = project.get("pi_name_raw", "")
+            out_rows.append(match)
+            flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
+        if i % 10 == 0:
+            print(f"  ...{i}/{len(rows)} projects processed, {len(out_rows)} publications matched so far")
+
+    with open(args.out, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(out_rows)
+
+    print(f"\nWrote {len(out_rows)} publication match rows -> {args.out}")
+    print("Flag breakdown:")
+    for flag, count in sorted(flag_counts.items(), key=lambda kv: -kv[1]):
+        pct = 100 * count / len(out_rows) if out_rows else 0
+        print(f"  {flag}: {count} ({pct:.1f}%)")
+
+
+if __name__ == "__main__":
+    main()
