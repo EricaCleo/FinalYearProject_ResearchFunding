@@ -95,16 +95,19 @@ def lookup_by_doi(doi: str) -> dict | None:
 _SHRINK_FRACTIONS = (1.0, 0.8, 0.6, 0.45, 0.3)
 
 
-def search_by_title(title: str, per_page: int = 3) -> list[dict]:
+def search_by_title(title: str, per_page: int = 3) -> tuple[list[dict], str]:
     # The raw "title" field from RGC is really "title + journal + volume/pages"
     # all run together, and OpenAlex's title search ANDs every word together --
     # one stray journal-name or page-number token is enough to return zero
     # results. Shrink from the full string down to just a leading fraction of
     # its words until something matches; this finds roughly where the real
     # title ends without having to parse the citation format, which varies.
+    # Returns (results, the cleaned candidate text that actually got the hit)
+    # -- similarity should be checked against THAT, not the raw messy field,
+    # or a correct match looks like a bad one just because of leftover junk.
     words = title.split()
     if not words:
-        return []
+        return [], ""
     for fraction in _SHRINK_FRACTIONS:
         n = max(4, round(len(words) * fraction))
         candidate = " ".join(words[:n]).strip(" ,.;:-")
@@ -122,8 +125,8 @@ def search_by_title(title: str, per_page: int = 3) -> list[dict]:
         })
         results = data.get("results", [])
         if results:
-            return results
-    return []
+            return results, candidate
+    return [], ""
 
 
 def work_author_surnames(work: dict) -> list[str]:
@@ -178,7 +181,7 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
         return row
 
     try:
-        candidates = search_by_title(raw_title)
+        candidates, cleaned_query = search_by_title(raw_title)
     except BudgetExhausted as exc:
         row["match_method"] = "title_search_failed"
         row["flag"] = "review_budget_exhausted"
@@ -194,8 +197,12 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
         row["flag"] = "review_no_candidates"
         return row
 
-    top = candidates[0]
-    sim = title_similarity(raw_title, top.get("title", ""))
+    # Rank by actual title similarity to the cleaned query, not search
+    # relevance order -- otherwise a near-duplicate paper in the same
+    # author's series (sharing most of the same leading words) can outrank
+    # the real match once the query's been shrunk down to that shared prefix.
+    top = max(candidates, key=lambda c: title_similarity(cleaned_query, c.get("title", "")))
+    sim = title_similarity(cleaned_query, top.get("title", ""))
     year_match = bool(raw_year) and abs(int(top.get("publication_year") or 0) - int(raw_year)) <= YEAR_TOLERANCE
     cand_authors = work_author_surnames(top)
     author_match = bool(raw_authors) and any(a in cand_authors for a in raw_authors)
