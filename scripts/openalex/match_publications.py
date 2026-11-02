@@ -106,6 +106,13 @@ def search_by_title(title: str, per_page: int = 3) -> list[dict]:
     for fraction in _SHRINK_FRACTIONS:
         n = max(4, round(len(words) * fraction))
         candidate = " ".join(words[:n]).strip(" ,.;:-")
+        # "*" is a wildcard in OpenAlex's filter syntax, not a literal character --
+        # scraped author/title text sometimes carries one as a corresponding-author
+        # marker, which OpenAlex then rejects outright (400) rather than ignoring.
+        candidate = candidate.replace("*", " ")
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        if len(candidate) < 3:
+            continue
         data = openalex_get("works", {
             "filter": f"title.search:{candidate}",
             "sort": "relevance_score:desc",
@@ -162,7 +169,13 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
     if not raw_title:
         return row
 
-    candidates = search_by_title(raw_title)
+    try:
+        candidates = search_by_title(raw_title)
+    except RuntimeError as exc:
+        row["match_method"] = "title_search_failed"
+        row["flag"] = "review_search_error"
+        print(f"    search failed for \"{raw_title[:60]}\": {exc}")
+        return row
     if not candidates:
         row["match_method"] = "title_search"
         row["flag"] = "review_no_candidates"

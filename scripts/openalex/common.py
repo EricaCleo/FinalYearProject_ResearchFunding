@@ -185,6 +185,11 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
             time.sleep(min(2 ** attempt, 30) + 2)
             continue
 
+        if response.status_code == 400:
+            # a validation error (bad filter syntax, etc.) is deterministic --
+            # retrying the identical request just wastes time and quota
+            raise RuntimeError(f"OpenAlex rejected the request (HTTP 400): {response.text[:300]} ({url})")
+
         if not response.ok:
             last_detail = f"HTTP {response.status_code}: {response.text[:300]}"
             print(f"    attempt {attempt + 1}/{max_retries}: {last_detail}, retrying")
