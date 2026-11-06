@@ -436,6 +436,7 @@ def main():
                     print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
                 continue
 
+            hit_budget_wall = False
             for entry in entries:
                 match = match_one_publication(entry, project.get("pi_name_raw", ""))
                 row = dict(project)
@@ -444,8 +445,21 @@ def main():
                 handle.flush()
                 total_rows += 1
                 flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
+                if match["flag"] == "review_budget_exhausted":
+                    # every remaining call today will fail the identical way --
+                    # no point burning time cycling through the rest of this
+                    # project's publications, or the hundreds of projects after
+                    # it, only to write out hundreds more guaranteed-failed
+                    # rows that just get discarded and retried tomorrow anyway
+                    hit_budget_wall = True
+                    break
             if i % 10 == 0:
                 print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
+            if hit_budget_wall:
+                print(f"\nBudget exhausted at project {i}/{len(rows)} -- stopping here instead of "
+                      f"cycling through the rest, which would all fail the same way. Re-run this "
+                      f"same command once it resets to continue from here.")
+                break
     except KeyboardInterrupt:
         print(f"\nInterrupted -- {total_rows} rows already saved, safe to re-run later")
     finally:
