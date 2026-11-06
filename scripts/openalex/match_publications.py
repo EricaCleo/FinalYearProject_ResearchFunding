@@ -15,6 +15,7 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import random
 import re
 from difflib import SequenceMatcher
@@ -319,33 +320,56 @@ def main():
     # leaves every row matched so far safely on disk.
     flag_counts = {}
     total_rows = 0
-    writers = {}  # award_year -> (file handle, DictWriter), only used when --split-by-year
-    single_file = None
+    skipped_resumed = 0
+    writers = {}  # key -> (file handle, DictWriter), only used when --split-by-year
+    done_ids = {}  # key -> set of project_ids already in that file from a previous run
 
-    def get_writer(award_year: str):
-        nonlocal single_file
-        if not args.split_by_year:
-            if single_file is None:
-                single_file = open(args.out, "w", encoding="utf-8-sig", newline="")
-                w = csv.DictWriter(single_file, fieldnames=full_columns, extrasaction="ignore")
-                w.writeheader()
-                writers["_single"] = (single_file, w)
-            return writers["_single"][1], single_file
-        if award_year not in writers:
-            import os
-            os.makedirs(args.out_dir, exist_ok=True)
-            path = os.path.join(args.out_dir, f"{award_year or 'unknown_year'}.csv")
-            f = open(path, "w", encoding="utf-8-sig", newline="")
+    def load_done_ids(path) -> set[str]:
+        # Re-running the same command (e.g. the next day, once budget resets)
+        # should pick up where it left off, not redo (and re-spend budget on)
+        # projects a prior run already finished -- the file itself is the
+        # record of what's done, so read it back rather than tracking state
+        # separately.
+
+        if not os.path.exists(path):
+            return set()
+        with open(path, encoding="utf-8-sig") as f:
+            return {r["project_id"] for r in csv.DictReader(f) if r.get("project_id")}
+
+    def get_writer(key: str, path: str):
+        if key not in writers:
+            existing = load_done_ids(path)
+            done_ids[key] = existing
+            mode = "a" if existing else "w"
+            f = open(path, mode, encoding="utf-8-sig", newline="")
             w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
-            w.writeheader()
-            writers[award_year] = (f, w)
-            print(f"  opened {path}")
-        return writers[award_year][1], writers[award_year][0]
+            if not existing:
+                w.writeheader()
+            writers[key] = (f, w)
+            if existing:
+                print(f"  resuming {path}: {len(existing)} projects already done, skipping those")
+            else:
+                print(f"  opened {path}")
+        return writers[key][1], writers[key][0]
 
     try:
         for i, project in enumerate(rows, start=1):
             award_year = project.get("award_year", "")
-            writer, handle = get_writer(award_year)
+            if args.split_by_year:
+
+                key = award_year or "unknown_year"
+                path = os.path.join(args.out_dir, f"{key}.csv")
+            else:
+                key, path = "_single", args.out
+            if key not in writers:
+
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            writer, handle = get_writer(key, path)
+
+            if project.get("project_id", "") in done_ids.get(key, set()):
+                skipped_resumed += 1
+                continue
+
             do_match = (not args.match_status) or (project.get("status", "") == args.match_status)
 
             if not do_match:
@@ -393,6 +417,8 @@ def main():
 
     out_desc = args.out_dir if args.split_by_year else args.out
     print(f"\nWrote {total_rows} rows -> {out_desc}")
+    if skipped_resumed:
+        print(f"Skipped {skipped_resumed} projects already done from a previous run (resumed, not re-spent)")
     print("Flag breakdown:")
     for flag, count in sorted(flag_counts.items(), key=lambda kv: -kv[1]):
         pct = 100 * count / total_rows if total_rows else 0
