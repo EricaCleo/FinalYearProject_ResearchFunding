@@ -336,20 +336,44 @@ def main():
         # projects a prior run already finished -- the file itself is the
         # record of what's done, so read it back rather than tracking state
         # separately.
-
+        #
+        # A project with a review_budget_exhausted row didn't actually finish
+        # -- it just happened to be mid-flight when the budget hit $0 -- so
+        # it must NOT count as done, or it would be silently skipped forever.
+        # Its stale failed row(s) are dropped here so the retry's real result
+        # replaces them instead of sitting alongside them.
         if not os.path.exists(path):
-            return set()
+            return set(), [], False
         with open(path, encoding="utf-8-sig") as f:
-            return {r["project_id"] for r in csv.DictReader(f) if r.get("project_id")}
+            all_rows = list(csv.DictReader(f))
+        retry_ids = {r["project_id"] for r in all_rows if r.get("flag") == "review_budget_exhausted"}
+        keep_rows = [r for r in all_rows if r.get("project_id") not in retry_ids]
+        done_ids = {r["project_id"] for r in keep_rows if r.get("project_id")}
+        if retry_ids:
+            print(f"  {path}: {len(retry_ids)} project(s) hit the budget wall last time, will retry: {sorted(retry_ids)}")
+        return done_ids, keep_rows, bool(retry_ids)
 
     def get_writer(key: str, path: str):
         if key not in writers:
-            existing = load_done_ids(path)
+            existing, keep_rows, had_retries = load_done_ids(path)
             done_ids[key] = existing
-            mode = "a" if existing else "w"
-            f = open(path, mode, encoding="utf-8-sig", newline="")
-            w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
-            if not existing:
+            file_exists = os.path.exists(path)
+            if had_retries:
+                # dropped some stale budget-exhausted rows -- rewrite clean
+                # rather than append, so the retry's result replaces them
+                # instead of sitting alongside them
+                f = open(path, "w", encoding="utf-8-sig", newline="")
+                w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
+                w.writeheader()
+                for r in keep_rows:
+                    w.writerow(r)
+                f.flush()
+            elif file_exists:
+                f = open(path, "a", encoding="utf-8-sig", newline="")
+                w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
+            else:
+                f = open(path, "w", encoding="utf-8-sig", newline="")
+                w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
                 w.writeheader()
             writers[key] = (f, w)
             if existing:
