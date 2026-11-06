@@ -168,13 +168,9 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
     row["doi_extracted"] = doi
 
     if doi:
-        try:
-            work = lookup_by_doi(doi)
-        except BudgetExhausted as exc:
-            row["match_method"] = "doi_failed"
-            row["flag"] = "review_budget_exhausted"
-            print(f"    budget exhausted on DOI lookup {doi}: {exc}")
-            return row
+        # BudgetExhausted propagates up uncaught -- the caller stops the run
+        # immediately rather than recording a half-finished attempt here
+        work = lookup_by_doi(doi)
         if work is None:
             row["match_method"] = "doi_failed"
             row["flag"] = "review_doi_not_found"
@@ -193,11 +189,8 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
 
     try:
         candidates, cleaned_query = search_by_title(raw_title)
-    except BudgetExhausted as exc:
-        row["match_method"] = "title_search_failed"
-        row["flag"] = "review_budget_exhausted"
-        print(f"    budget exhausted on title search: {exc}")
-        return row
+    except BudgetExhausted:
+        raise  # propagates up uncaught, same as the DOI path above -- must come before the RuntimeError catch below, since BudgetExhausted is a RuntimeError subclass
     except RuntimeError as exc:
         row["match_method"] = "title_search_failed"
         row["flag"] = "review_search_error"
@@ -438,21 +431,24 @@ def main():
 
             hit_budget_wall = False
             for entry in entries:
-                match = match_one_publication(entry, project.get("pi_name_raw", ""))
+                try:
+                    match = match_one_publication(entry, project.get("pi_name_raw", ""))
+                except BudgetExhausted:
+                    # don't write anything for this half-finished project --
+                    # every remaining call today would fail the identical way,
+                    # so there's nothing useful to record. Leaving its
+                    # project_id entirely out of the file means next run's
+                    # resume just sees it as "not done yet" and retries it
+                    # cleanly, with no stale row to find and drop first.
+                    newly_done_ids[key].discard(project.get("project_id", ""))
+                    hit_budget_wall = True
+                    break
                 row = dict(project)
                 row.update(match)
                 writer.writerow(row)
                 handle.flush()
                 total_rows += 1
                 flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
-                if match["flag"] == "review_budget_exhausted":
-                    # every remaining call today will fail the identical way --
-                    # no point burning time cycling through the rest of this
-                    # project's publications, or the hundreds of projects after
-                    # it, only to write out hundreds more guaranteed-failed
-                    # rows that just get discarded and retried tomorrow anyway
-                    hit_budget_wall = True
-                    break
             if i % 10 == 0:
                 print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
             if hit_budget_wall:
