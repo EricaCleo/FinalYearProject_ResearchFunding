@@ -323,6 +323,12 @@ def main():
     skipped_resumed = 0
     writers = {}  # key -> (file handle, DictWriter), only used when --split-by-year
     done_ids = {}  # key -> set of project_ids already in that file from a previous run
+    newly_done_ids = {}  # key -> set of project_ids this run processed (not skipped)
+    year_targets = {}  # key -> how many projects this run's filters cover for that key
+
+    for project in rows:
+        key = (project.get("award_year", "") or "unknown_year") if args.split_by_year else "_single"
+        year_targets[key] = year_targets.get(key, 0) + 1
 
     def load_done_ids(path) -> set[str]:
         # Re-running the same command (e.g. the next day, once budget resets)
@@ -370,6 +376,7 @@ def main():
                 skipped_resumed += 1
                 continue
 
+            newly_done_ids.setdefault(key, set()).add(project.get("project_id", ""))
             do_match = (not args.match_status) or (project.get("status", "") == args.match_status)
 
             if not do_match:
@@ -419,7 +426,15 @@ def main():
     print(f"\nWrote {total_rows} rows -> {out_desc}")
     if skipped_resumed:
         print(f"Skipped {skipped_resumed} projects already done from a previous run (resumed, not re-spent)")
-    print("Flag breakdown:")
+
+    print("\nProgress (projects covered so far / total for this run's filters):")
+    for key in sorted(year_targets):
+        covered = len(done_ids.get(key, set()) | newly_done_ids.get(key, set()))
+        target = year_targets[key]
+        status = "DONE" if covered >= target else "incomplete -- re-run this same command once budget resets"
+        print(f"  {key}: {covered}/{target} ({100 * covered / target:.1f}%) -- {status}")
+
+    print("\nFlag breakdown:")
     for flag, count in sorted(flag_counts.items(), key=lambda kv: -kv[1]):
         pct = 100 * count / total_rows if total_rows else 0
         print(f"  {flag}: {count} ({pct:.1f}%)")
