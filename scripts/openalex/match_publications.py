@@ -20,7 +20,7 @@ import random
 import re
 from difflib import SequenceMatcher
 
-from common import BudgetExhausted, clean_person_name, openalex_get
+from common import BudgetExhausted, QueryTooBroad, clean_person_name, openalex_get
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\"'<>\\]+")
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
@@ -123,11 +123,17 @@ def search_by_title(title: str, per_page: int = 3) -> tuple[list[dict], str]:
         candidate = re.sub(r"\s+", " ", candidate).strip()
         if len(candidate) < 3:
             continue
-        data = openalex_get("works", {
-            "filter": f"title.search:{candidate}",
-            "sort": "relevance_score:desc",
-            "per_page": per_page,
-        })
+        try:
+            data = openalex_get("works", {
+                "filter": f"title.search:{candidate}",
+                "sort": "relevance_score:desc",
+                "per_page": per_page,
+            })
+        except QueryTooBroad:
+            # this fraction was too broad/complex and timed out -- the whole
+            # point of the shrink ladder is trying a narrower one next, so
+            # move on instead of giving up on the title entirely
+            continue
         results = data.get("results", [])
         if results:
             return results, candidate

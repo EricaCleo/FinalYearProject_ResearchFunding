@@ -16,6 +16,11 @@ class BudgetExhausted(RuntimeError):
     """The daily OpenAlex budget is at $0 -- retrying won't help until the reset."""
 
 
+class QueryTooBroad(RuntimeError):
+    """The query itself timed out (too many terms) -- retrying the identical query won't help,
+    but a shorter/narrower version of the same query might."""
+
+
 BASE_URL = "https://api.openalex.org"
 API_KEY = os.getenv("OPENALEX_API_KEY")  # optional
 MAILTO = os.getenv("OPENALEX_MAILTO")  # optional but recommended, e.g. export OPENALEX_MAILTO="you@example.com"
@@ -203,6 +208,13 @@ def openalex_get(endpoint: str, params: dict | None = None, max_retries: int = 5
             # a validation error (bad filter syntax, etc.) is deterministic --
             # retrying the identical request just wastes time and quota
             raise RuntimeError(f"OpenAlex rejected the request (HTTP 400): {response.text[:300]} ({url})")
+
+        if response.status_code == 504:
+            # "query took longer than 9 seconds" -- a query this broad times
+            # out the same way every time, so 5 retries just burns ~45+
+            # seconds for nothing; the caller should try a narrower query
+            # instead, not the identical one again
+            raise QueryTooBroad(f"OpenAlex query timed out (HTTP 504): {response.text[:300]} ({url})")
 
         if not response.ok:
             last_detail = f"HTTP {response.status_code}: {response.text[:300]}"
