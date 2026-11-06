@@ -25,10 +25,10 @@ DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\"'<>\\]+")
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
 YEAR_TOLERANCE = 1  # print year vs online-first year can differ by a year
 
-OUTPUT_COLUMNS = [
-    "project_id", "pi_name_raw", "raw_title", "raw_year", "raw_authors",
-    "doi_extracted", "match_method", "matched_work_id", "matched_title",
-    "matched_year", "title_similarity", "year_match", "author_match", "flag",
+MATCH_COLUMNS = [
+    "raw_title", "raw_year", "raw_authors", "doi_extracted", "match_method",
+    "matched_work_id", "matched_title", "matched_year", "title_similarity",
+    "year_match", "author_match", "flag",
 ]
 
 
@@ -229,7 +229,22 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rgc-awards", required=True, help="rgc_awards.csv from combine_rgc_data.py")
-    parser.add_argument("--out", default="publication_matches.csv")
+    parser.add_argument("--out", default="publication_matches.csv",
+                         help="Output CSV (single file). Ignored if --split-by-year is set.")
+    parser.add_argument("--out-dir", default=".",
+                         help="Directory for the per-year CSVs when --split-by-year is set.")
+    parser.add_argument("--split-by-year", action="store_true",
+                         help="Write one CSV per award_year (named <out-dir>/<year>.csv) instead of "
+                              "a single combined file -- one sheet per year, as requested for the "
+                              "real run, instead of the single-file mode used for sample testing.")
+    parser.add_argument("--match-status", default="",
+                         help="Only actually run OpenAlex matching for projects with this exact "
+                              "status (e.g. 'Completed') -- projects with any other status still "
+                              "appear in the output with every original field, just with the match "
+                              "columns left blank (no API calls spent on them; nothing to find yet "
+                              "for e.g. an On-going project).")
+    parser.add_argument("--year-start", type=int, default=0, help="Only award_year >= this (inclusive).")
+    parser.add_argument("--year-end", type=int, default=0, help="Only award_year <= this (inclusive).")
     parser.add_argument("--sample", type=int, default=0, help="Random sample of N projects (0 = full dataset)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-count", type=int, default=0,
@@ -253,11 +268,23 @@ def main():
         parser.error("use either --batch-count/--batch-index or --offset/--limit, not both")
 
     with open(args.rgc_awards, encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        original_fieldnames = reader.fieldnames
+        rows = list(reader)
 
     with_pubs = sum(1 for r in rows if parse_publication_entries(r.get("publications", "")))
     print(f"{len(rows)} projects total, {with_pubs} with reported publications "
           f"({len(rows) - with_pubs} with none -- kept in the output, flagged, not dropped)")
+
+    if args.year_start or args.year_end:
+        def in_year_range(r):
+            try:
+                y = int(r.get("award_year", ""))
+            except ValueError:
+                return False
+            return (not args.year_start or y >= args.year_start) and (not args.year_end or y <= args.year_end)
+        rows = [r for r in rows if in_year_range(r)]
+        print(f"Filtered to award_year {args.year_start or 'any'}-{args.year_end or 'any'}: {len(rows)} projects")
 
     if args.sample:
         random.seed(args.seed)
@@ -281,51 +308,91 @@ def main():
         print(f"Running batch {args.batch_index + 1}/{args.batch_count}: "
               f"{len(rows)} projects (rows {start}-{start + len(rows) - 1} of the sample)")
 
+    # Full schema = every original scraped column (so nothing is lost) plus
+    # the match-derived ones, no duplicates -- project_id/pi_name_raw already
+    # exist in the original columns, so they're not repeated.
+    full_columns = list(original_fieldnames) + MATCH_COLUMNS
+    blank_match = {col: "" for col in MATCH_COLUMNS}
+
     # Written one row at a time (and flushed) rather than held in memory and
     # saved at the end -- a budget cutoff or Ctrl+C partway through still
     # leaves every row matched so far safely on disk.
     flag_counts = {}
     total_rows = 0
-    out_file = open(args.out, "w", encoding="utf-8-sig", newline="")
-    writer = csv.DictWriter(out_file, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
-    writer.writeheader()
+    writers = {}  # award_year -> (file handle, DictWriter), only used when --split-by-year
+    single_file = None
+
+    def get_writer(award_year: str):
+        nonlocal single_file
+        if not args.split_by_year:
+            if single_file is None:
+                single_file = open(args.out, "w", encoding="utf-8-sig", newline="")
+                w = csv.DictWriter(single_file, fieldnames=full_columns, extrasaction="ignore")
+                w.writeheader()
+                writers["_single"] = (single_file, w)
+            return writers["_single"][1], single_file
+        if award_year not in writers:
+            import os
+            os.makedirs(args.out_dir, exist_ok=True)
+            path = os.path.join(args.out_dir, f"{award_year or 'unknown_year'}.csv")
+            f = open(path, "w", encoding="utf-8-sig", newline="")
+            w = csv.DictWriter(f, fieldnames=full_columns, extrasaction="ignore")
+            w.writeheader()
+            writers[award_year] = (f, w)
+            print(f"  opened {path}")
+        return writers[award_year][1], writers[award_year][0]
 
     try:
         for i, project in enumerate(rows, start=1):
+            award_year = project.get("award_year", "")
+            writer, handle = get_writer(award_year)
+            do_match = (not args.match_status) or (project.get("status", "") == args.match_status)
+
+            if not do_match:
+                row = dict(project)
+                row.update(blank_match)
+                writer.writerow(row)
+                handle.flush()
+                total_rows += 1
+                flag_counts["(unmatched status)"] = flag_counts.get("(unmatched status)", 0) + 1
+                if i % 10 == 0:
+                    print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
+                continue
+
             entries = [e for e in parse_publication_entries(project["publications"]) if isinstance(e, dict)]
 
             if not entries:
                 # not dropped -- flagged for a later stage that matches the PI
                 # directly to an OpenAlex Author and pulls their publications
-                row = {col: "" for col in OUTPUT_COLUMNS}
-                row.update({
-                    "project_id": project["project_id"], "pi_name_raw": project.get("pi_name_raw", ""),
-                    "match_method": "no_publications_reported", "flag": "no_publications_reported",
-                })
+                row = dict(project)
+                row.update(blank_match)
+                row.update({"match_method": "no_publications_reported", "flag": "no_publications_reported"})
                 writer.writerow(row)
-                out_file.flush()
+                handle.flush()
                 total_rows += 1
                 flag_counts[row["flag"]] = flag_counts.get(row["flag"], 0) + 1
                 if i % 10 == 0:
-                    print(f"  ...{i}/{len(rows)} projects processed, {total_rows} publications matched so far")
+                    print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
                 continue
 
             for entry in entries:
                 match = match_one_publication(entry, project.get("pi_name_raw", ""))
-                match["project_id"] = project["project_id"]
-                match["pi_name_raw"] = project.get("pi_name_raw", "")
-                writer.writerow(match)
-                out_file.flush()
+                row = dict(project)
+                row.update(match)
+                writer.writerow(row)
+                handle.flush()
                 total_rows += 1
                 flag_counts[match["flag"]] = flag_counts.get(match["flag"], 0) + 1
             if i % 10 == 0:
-                print(f"  ...{i}/{len(rows)} projects processed, {total_rows} publications matched so far")
+                print(f"  ...{i}/{len(rows)} projects processed, {total_rows} rows written so far")
     except KeyboardInterrupt:
-        print(f"\nInterrupted -- {total_rows} rows already saved to {args.out}, safe to re-run later")
+        print(f"\nInterrupted -- {total_rows} rows already saved, safe to re-run later")
     finally:
-        out_file.close()
+        for f, _ in writers.values():
+            f.close()
 
-    print(f"\nWrote {total_rows} publication match rows -> {args.out}")
+    out_desc = args.out_dir if args.split_by_year else args.out
+    print(f"\nWrote {total_rows} rows -> {out_desc}")
     print("Flag breakdown:")
     for flag, count in sorted(flag_counts.items(), key=lambda kv: -kv[1]):
         pct = 100 * count / total_rows if total_rows else 0
