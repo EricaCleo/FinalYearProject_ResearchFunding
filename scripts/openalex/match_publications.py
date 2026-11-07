@@ -30,7 +30,23 @@ MATCH_COLUMNS = [
     "raw_title", "raw_year", "raw_authors", "doi_extracted", "match_method",
     "matched_work_id", "matched_title", "matched_year", "title_similarity",
     "year_match", "author_match", "flag",
+    "cited_by_count", "fwci", "is_oa", "oa_status", "venue",
 ]
+
+
+def extract_quant_metrics(work: dict) -> dict:
+    # is_oa/oa_status live nested under open_access in OpenAlex's real schema,
+    # not top-level, despite the filter key itself being named "is_oa"
+    open_access = work.get("open_access") or {}
+    primary_location = work.get("primary_location") or {}
+    source = primary_location.get("source") or {}
+    return {
+        "cited_by_count": work.get("cited_by_count", ""),
+        "fwci": work.get("fwci", ""),
+        "is_oa": open_access.get("is_oa", work.get("is_oa", "")),
+        "oa_status": open_access.get("oa_status", work.get("oa_status", "")),
+        "venue": source.get("display_name", ""),
+    }
 
 
 def normalize_title(title: str) -> str:
@@ -181,6 +197,7 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
             "matched_title": work.get("title", ""), "matched_year": work.get("publication_year", ""),
             "title_similarity": round(sim, 3),
         })
+        row.update(extract_quant_metrics(work))
         row["flag"] = "ok" if sim >= 0.6 else "review_title_mismatch"
         return row
 
@@ -216,6 +233,7 @@ def match_one_publication(entry: dict, pi_name_raw: str) -> dict:
         "matched_title": top.get("title", ""), "matched_year": top.get("publication_year", ""),
         "title_similarity": round(sim, 3), "year_match": year_match, "author_match": author_match,
     })
+    row.update(extract_quant_metrics(top))
 
     if sim >= 0.85 and (year_match or author_match):
         row["flag"] = "ok"
